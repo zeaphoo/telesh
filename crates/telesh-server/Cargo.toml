@@ -1,0 +1,31 @@
+[package]
+name = "telesh-server"
+description = "telesh tunnel control server and edge ingress"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "telesh-server"
+path = "src/main.rs"
+
+[dependencies]
+telesh-protocol = { path = "../telesh-protocol" }
+tokio = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+dashmap = { workspace = true }
+futures = { workspace = true }
+rand = { workspace = true }
+httparse = "1"
+rust-embed = "8"
+serde_json = "1"
+
+[dependencies.axum]
+workspace = true
+features = ["ws", "tokio"]

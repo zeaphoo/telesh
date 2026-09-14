@@ -1,0 +1,13 @@
+[package]
+name = "telesh-protocol"
+description = "Wire protocol shared between telesh agent and server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+bincode = { workspace = true }
+thiserror = { workspace = true }
+rand = { workspace = true }

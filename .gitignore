@@ -1,0 +1,32 @@
+# ── Rust / Cargo ──
+/target/
+**/*.rs.bk
+*.pdb
+
+# ── Node / pnpm ──
+node_modules/
+dist/
+dist-ssr/
+*.local
+*.log
+pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Runtime / scratch ──
+.tmp/
+.vendor/
+
+# ── Environment / secrets ──
+.env
+.env.*
+!.env.example
+
+# ── Editor / OS ──
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.swp
+*.swo
