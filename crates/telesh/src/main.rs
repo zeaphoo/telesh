@@ -37,7 +37,7 @@ struct Cli {
     no_reconnect: bool,
 
     /// Address for the agent-local inspector dashboard (requests log + stats).
-    #[arg(long, global = true, env = "TELESH_INSPECTOR_ADDR", default_value = "127.0.0.1:7400")]
+    #[arg(long, global = true, env = "TELESH_INSPECTOR_ADDR", default_value = "127.0.0.1:16345")]
     dashboard_addr: SocketAddr,
 }
 

@@ -72,7 +72,7 @@ pub struct Config {
 
     /// Address for the dashboard UI + API + /metrics. Defaults to loopback
     /// so the admin surface is not exposed to the public ingress.
-    #[arg(long, env = "TELESH_DASHBOARD_ADDR", default_value = "127.0.0.1:7500")]
+    #[arg(long, env = "TELESH_DASHBOARD_ADDR", default_value = "127.0.0.1:16456")]
     pub dashboard_addr: SocketAddr,
 }
 

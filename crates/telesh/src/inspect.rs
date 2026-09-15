@@ -3,7 +3,7 @@
 //! ngrok-style: the agent sees every request passing to/from the local
 //! service, so it records an HTTP-level log (method, path, status, timing,
 //! sizes, payloads) served on a localhost-only port (`--dashboard-addr`,
-//! default 127.0.0.1:7400). This never leaves the machine — useful for local
+//! default 127.0.0.1:16345). This never leaves the machine — useful for local
 //! debugging while the public tunnel stays opaque to the server.
 
 use std::collections::VecDeque;

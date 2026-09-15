@@ -29,7 +29,7 @@ pub fn default_path() -> PathBuf {
     if let Ok(home) = std::env::var("HOME") {
         return PathBuf::from(home).join(".telesh").join("state");
     }
-    PathBuf::from(".telesh-agent-state")
+    PathBuf::from(".telesh-state")
 }
 
 /// Load state, generating a fresh agent_id if the file is absent.

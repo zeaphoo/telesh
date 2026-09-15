@@ -1201,7 +1201,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "telesh-agent"
+name = "telesh"
 version = "0.1.0"
 dependencies = [
  "anyhow",
