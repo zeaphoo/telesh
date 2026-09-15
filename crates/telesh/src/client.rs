@@ -23,6 +23,13 @@ use crate::local;
 static OUTBOUND: OnceLock<mpsc::UnboundedSender<Frame>> = OnceLock::new();
 static SUBDOMAIN: OnceLock<std::sync::Mutex<Option<String>>> = OnceLock::new();
 
+/// Cell holding the subdomain the server assigned us, so reconnects within
+/// this process re-request it and keep the public URL stable. Lazily created
+/// because [`OnceLock::set`] would otherwise never run before the first read.
+fn subdomain_cell() -> &'static std::sync::Mutex<Option<String>> {
+    SUBDOMAIN.get_or_init(|| std::sync::Mutex::new(None))
+}
+
 /// Per-run raw-TCP tunnel parameters.
 #[derive(Debug, Clone)]
 pub struct TcpOptions {
@@ -122,9 +129,7 @@ pub async fn run_once(opts: &AgentOptions) -> Result<Option<String>> {
         ServerHello::Error(e) => anyhow::bail!("server error: {e}"),
     };
     if let Some(sub) = &assigned_subdomain {
-        if let Some(m) = SUBDOMAIN.get() {
-            *m.lock().unwrap() = Some(sub.clone());
-        }
+        *subdomain_cell().lock().unwrap() = Some(sub.clone());
     }
 
     // ---- Raw-TCP tunnel registration (optional) ----
@@ -205,10 +210,7 @@ fn resolve_subdomain(opts: &AgentOptions) -> Option<String> {
     }
     // Reconnect after an assigned (random) subdomain: reuse it to keep the
     // public URL stable. The server replaces our stale connection anyway.
-    if let Some(m) = SUBDOMAIN.get() {
-        return m.lock().unwrap().clone();
-    }
-    None
+    subdomain_cell().lock().unwrap().clone()
 }
 
 async fn wait_server_hello<S>(stream: &mut S) -> Result<Option<ServerHello>>

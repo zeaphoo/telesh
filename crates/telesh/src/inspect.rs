@@ -95,6 +95,7 @@ pub fn init() {
         records: Mutex::new(VecDeque::new()),
         next_id: AtomicU64::new(1),
     });
+    let _ = INFO.set(Mutex::new(AgentInfo::default()));
 }
 
 fn inspector() -> &'static Inspector {
@@ -305,19 +306,28 @@ fn format_timestamp() -> String {
 // Local dashboard HTTP server
 // ---------------------------------------------------------------------------
 
-/// Static facts about this agent run, set once at startup.
+/// Static facts about this agent run, updated on every (re)connect.
+#[derive(Debug, Clone, Default)]
 pub struct AgentInfo {
     pub mode: String,       // "http" | "tcp"
     pub local: String,      // e.g. "127.0.0.1:8000"
     pub remote: String,     // public entry, e.g. "mysite:8080" / "tcp://host:18008"
 }
-static INFO: OnceLock<AgentInfo> = OnceLock::new();
+static INFO: OnceLock<Mutex<AgentInfo>> = OnceLock::new();
 
+/// Overwrite the current tunnel facts. Called on every handshake success so a
+/// reconnect (possibly with a new public URL) refreshes the dashboard instead
+/// of leaving the first connection's value pinned forever.
 pub fn set_info(info: AgentInfo) {
-    let _ = INFO.set(info);
+    match INFO.get() {
+        Some(m) => *m.lock().unwrap() = info,
+        None => {
+            let _ = INFO.set(Mutex::new(info));
+        }
+    }
 }
-pub fn info() -> &'static AgentInfo {
-    INFO.get().expect("agent info not set")
+pub fn info() -> AgentInfo {
+    INFO.get().expect("inspector not initialized").lock().unwrap().clone()
 }
 
 /// The built agent-ui (agent-ui/dist) embedded at compile time.
