@@ -61,6 +61,28 @@ pub struct Config {
     #[arg(long, env = "TELESH_SECRET", default_value = "")]
     pub secret: String,
 
+    /// Optional separate secret for lookup-only peers, so they never need
+    /// the master secret. Servers configured with `--secret` still accept the
+    /// master secret from peers; when this is unset, peers must use it.
+    #[arg(long, env = "TELESH_LOOKUP_SECRET", default_value = "")]
+    pub lookup_secret: String,
+
+    /// SQLite database holding accounts, keys and sessions.
+    /// Defaults to `~/.telesh/server.sqlite`.
+    #[arg(long, env = "TELESH_DB")]
+    pub db: Option<String>,
+
+    /// Optional secret required on first registration. When set, open signup is
+    /// closed: an unknown key may not create an account without it.
+    #[arg(long, env = "TELESH_ENROLLMENT_SECRET", default_value = "")]
+    pub enrollment_secret: String,
+
+    /// Also run an embedded iroh relay on this address. TLS and ACME/Let's
+    /// Encrypt settings come from the relay config file
+    /// (`$TELESH_RELAY_CONFIG`, default `~/.telesh/relay.toml`).
+    #[arg(long, env = "TELESH_RELAY_SERVE")]
+    pub relay_serve: Option<SocketAddr>,
+
     /// Max lifetime of a pending stream that the agent never accepts (ms).
     #[arg(long, env = "TELESH_ACCEPT_TIMEOUT_MS", default_value = "10000")]
     pub accept_timeout_ms: u64,

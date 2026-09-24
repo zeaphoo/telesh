@@ -49,21 +49,55 @@ pub fn decode(msg: &[u8]) -> Result<Frame, CodecError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::{ClientHello, ServerHello, StreamPacket};
+    use crate::message::{
+        AuthChallenge, AuthError, AuthMethod, AuthOk, AuthResponse, ClientHello, ClientKind,
+        P2PAddrResp, P2PAnnounce, P2PAnnounceResp, P2PLookup, ServerHello, StreamPacket, TcpMapped,
+        TokenCheck, TokenCheckResp, TrafficReport, LookupHello,
+    };
 
     #[test]
     fn roundtrip_small_frames() {
         let frames = [
             Frame::Hello(ClientHello {
-                protocol_version: 1,
-                agent_id: "agent-1".into(),
+                protocol_version: 2,
+                client_kind: ClientKind::Agent,
+                method: AuthMethod::Keypair,
+                public_key: Some([7u8; 32]),
+                session: None,
+                enrollment: Some("enroll".into()),
                 sub_domain: Some("web".into()),
-                auth_key: Some("secret".into()),
+                display_name: Some("Calm Otter".into()),
+            }),
+            Frame::AuthChallenge(AuthChallenge {
+                nonce: [1u8; 32],
+                server_id: [2u8; 32],
+                ts: 1234,
+            }),
+            Frame::AuthResponse(AuthResponse {
+                signature: vec![3u8; 64],
+            }),
+            Frame::AuthOk(AuthOk {
+                account: "000012345".into(),
+                session: vec![9, 9, 9],
+                expires_at: 9999,
+                display_name: "Calm Otter".into(),
+            }),
+            Frame::AuthError(AuthError::BadSignature),
+            Frame::TokenCheck(TokenCheck {
+                id: 7,
+                account: "000012345".into(),
+                name: "svc".into(),
+                token: vec![5, 5, 5],
+            }),
+            Frame::TokenCheckResp(TokenCheckResp {
+                id: 7,
+                ok: true,
+                expires_at: 1234,
             }),
             Frame::ServerHello(ServerHello::Success {
                 sub_domain: "web".into(),
                 hostname: "web.example.com".into(),
-                agent_id: "agent-1".into(),
+                agent_id: "000012345".into(),
             }),
             Frame::stream(StreamPacket::Init { stream_id: 42 }),
             Frame::stream(StreamPacket::Data {
@@ -72,6 +106,65 @@ mod tests {
             }),
             Frame::Ping,
             Frame::Pong,
+        ];
+        for f in frames {
+            let wire = encode(&f).unwrap();
+            let decoded = decode(&wire).unwrap();
+            assert_eq!(
+                format!("{:?}", decoded),
+                format!("{:?}", f),
+                "frame mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn roundtrip_p2p_frames() {
+        let id = iroh_base::SecretKey::generate().public();
+        let addr = iroh_base::EndpointAddr::new(id);
+        let frames = [
+            Frame::P2PAnnounce(P2PAnnounce {
+                name: "svc".into(),
+                addr: addr.clone(),
+                local_port: 8000,
+            }),
+            Frame::P2PLookup(P2PLookup {
+                account: "000012345".into(),
+                name: "svc".into(),
+            }),
+            Frame::P2PAddr(P2PAddrResp::Found {
+                account: "000012345".into(),
+                name: "svc".into(),
+                owner_name: "Calm Otter".into(),
+                addr: addr.clone(),
+                token: Some(vec![1, 2, 3]),
+            }),
+            Frame::P2PAddr(P2PAddrResp::NotFound),
+            Frame::Lookup(LookupHello {
+                protocol_version: 1,
+                auth_key: Some("secret".into()),
+                agent_id: "peer-1".into(),
+            }),
+            Frame::IrohReady(addr.clone()),
+            Frame::Traffic(TrafficReport {
+                name: "svc".into(),
+                up: 1024,
+                down: 2048,
+            }),
+            Frame::TcpMapped(TcpMapped {
+                name: "svc".into(),
+                addr: "203.0.113.7:22000".parse().unwrap(),
+                local_port: 22,
+            }),
+            Frame::P2PAnnounceResp(P2PAnnounceResp::Ok {
+                name: "svc".into(),
+            }),
+            Frame::P2PAnnounceResp(P2PAnnounceResp::NameTaken {
+                name: "svc".into(),
+            }),
+            Frame::P2PAnnounceResp(P2PAnnounceResp::InvalidName {
+                name: "BAD".into(),
+            }),
         ];
         for f in frames {
             let wire = encode(&f).unwrap();

@@ -9,12 +9,12 @@ use dashmap::DashMap;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::debug;
 
-use telesh_protocol::Frame;
+use telesh_protocol::{EndpointAddr, Frame};
 
 /// A live agent connection. `tx` is the sink task channel: every frame meant
 /// for this agent goes through it (stream inits, incoming data, pings...).
 #[derive(Debug, Clone)]
-pub struct ConnectedClient {
+pub struct AgentConn {
     pub agent_id: String,
     pub sub_domain: String,
     pub tx: UnboundedSender<Frame>,
@@ -23,8 +23,10 @@ pub struct ConnectedClient {
 
 #[derive(Default)]
 pub struct Registry {
-    by_host: DashMap<String, ConnectedClient>,
-    by_agent: DashMap<String, ConnectedClient>,
+    by_host: DashMap<String, AgentConn>,
+    by_agent: DashMap<String, AgentConn>,
+    /// iroh data-plane address per agent, announced via `Frame::IrohReady`.
+    iroh: DashMap<String, EndpointAddr>,
 }
 
 impl Registry {
@@ -46,6 +48,7 @@ impl Registry {
             crate::metrics::dec_http_tunnels();
             self.by_host.remove(&prev.sub_domain);
         }
+        self.iroh.remove(agent_id);
         // Reject if another agent owns the subdomain.
         if self
             .by_host
@@ -55,7 +58,7 @@ impl Registry {
             return false;
         }
 
-        let client = ConnectedClient {
+        let client = AgentConn {
             agent_id: agent_id.to_string(),
             sub_domain: sub_domain.to_string(),
             tx,
@@ -69,11 +72,22 @@ impl Registry {
         true
     }
 
-    pub fn find_by_host(&self, sub_domain: &str) -> Option<ConnectedClient> {
+    pub fn find_by_host(&self, sub_domain: &str) -> Option<AgentConn> {
         self.by_host.get(sub_domain).map(|c| c.clone())
     }
 
+    /// Record (or refresh) an agent's iroh data-plane address.
+    pub fn set_iroh_addr(&self, agent_id: &str, addr: EndpointAddr) {
+        self.iroh.insert(agent_id.to_string(), addr);
+    }
+
+    /// The agent's iroh data-plane address, if it announced one.
+    pub fn iroh_addr(&self, agent_id: &str) -> Option<EndpointAddr> {
+        self.iroh.get(agent_id).map(|e| e.clone())
+    }
+
     pub fn remove(&self, agent_id: &str) {
+        self.iroh.remove(agent_id);
         if let Some((_, client)) = self.by_agent.remove(agent_id) {
             self.by_host.remove(&client.sub_domain);
             crate::metrics::dec_agents();
@@ -91,7 +105,7 @@ impl Registry {
     }
 
     /// Snapshot of all connected agents.
-    pub fn list(&self) -> Vec<ConnectedClient> {
+    pub fn list(&self) -> Vec<AgentConn> {
         self.by_agent.iter().map(|e| e.value().clone()).collect()
     }
 }

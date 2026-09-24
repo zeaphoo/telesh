@@ -18,7 +18,7 @@ use telesh_protocol::{Frame, StreamPacket};
 
 use crate::config::config;
 use crate::metrics;
-use crate::registry::ConnectedClient;
+use crate::registry::AgentConn;
 use crate::state::{active_streams, next_stream_id, registry};
 
 const MAX_PEEK_BYTES: usize = 4096;
@@ -69,10 +69,57 @@ async fn handle_socket(mut socket: TcpStream) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Allocate a stream for `socket`, signal the owning agent, and pump bytes in
-/// both directions. Used by both HTTP-routed and raw-TCP tunnels.
-/// `traffic_key` names the tunnel in metrics (e.g. `http:mysite`, `tcp:18008`).
-pub async fn open_stream(client: ConnectedClient, mut socket: TcpStream, traffic_key: String) {
+/// Allocate a path for `socket` and pump bytes to the owning agent.
+///
+/// Prefers the direct iroh data plane when the agent announced one, falling
+/// back to the WebSocket relay on any failure. Used by both HTTP-routed and
+/// raw-TCP tunnels; `traffic_key` names the tunnel in metrics.
+pub async fn open_stream(client: AgentConn, socket: TcpStream, traffic_key: String) {
+    if let Some(endpoint) = crate::state::server_endpoint() {
+        if let Some(addr) = registry().iroh_addr(&client.agent_id) {
+            match crate::gateway::dial(endpoint, addr).await {
+                Ok((conn, mut send, mut recv)) => {
+                    // The agent authenticates the edge, attaches the local
+                    // service, then acks; only then does payload flow.
+                    if let Err(e) =
+                        crate::gateway::write_handshake(&mut send, &config().secret, "").await
+                    {
+                        debug!("iroh prelude failed, falling back to relay: {e:#}");
+                        drop(conn);
+                    } else {
+                        match crate::gateway::read_ack(&mut recv).await {
+                            Ok(crate::gateway::Ack::Ok) => {
+                                debug!(agent_id = %client.agent_id, key = %traffic_key, "routing over iroh");
+                                metrics::inc_conns();
+                                let (up, down) = crate::gateway::pump(socket, send, recv).await;
+                                metrics::add_traffic(&traffic_key, up, down);
+                                metrics::dec_conns();
+                                drop(conn);
+                                return;
+                            }
+                            Ok(crate::gateway::Ack::Refused) => {
+                                // Definitive: the agent could not serve it.
+                                debug!(agent_id = %client.agent_id, "agent refused iroh stream");
+                                drop(conn);
+                                return;
+                            }
+                            Err(e) => {
+                                debug!("iroh ack lost, falling back to relay: {e:#}");
+                                drop(conn);
+                            }
+                        }
+                    }
+                }
+                Err(e) => debug!("iroh dial failed, falling back to relay: {e:#}"),
+            }
+        }
+    }
+    open_stream_relay(client, socket, traffic_key).await;
+}
+
+/// Relay path: signal the agent over the control connection and multiplex the
+/// stream over the same WebSocket.
+async fn open_stream_relay(client: AgentConn, mut socket: TcpStream, traffic_key: String) {
     metrics::inc_conns();
     let stream_id = next_stream_id();
     let (tx, mut rx) = mpsc::unbounded_channel::<StreamPacket>();

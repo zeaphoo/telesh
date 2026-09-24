@@ -8,9 +8,12 @@
 pub mod config;
 pub mod control;
 pub mod dashboard;
+pub mod db;
+pub mod gateway;
 pub mod ingress;
 pub mod metrics;
 pub mod registry;
+pub mod relay_config;
 pub mod state;
 pub mod tcp;
 

@@ -8,6 +8,10 @@ rust-version.workspace = true
 
 [dependencies]
 telesh-protocol = { path = "../telesh-protocol" }
+# P2P data plane (hole-punched QUIC + relay fallback + port mapping).
+iroh = { workspace = true }
+# Router port mapping (UPnP/PCP/NAT-PMP) for the `p2p --map-tcp` public export.
+portmapper = "0.19"
 tokio = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }

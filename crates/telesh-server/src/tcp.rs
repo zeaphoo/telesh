@@ -14,13 +14,13 @@ use tracing::{debug, info, warn};
 
 use crate::config::config;
 use crate::ingress;
-use crate::registry::ConnectedClient;
+use crate::registry::AgentConn;
 
 /// One managed TCP tunnel: a bound public port whose accept loop feeds
 /// streams to `client`.
 pub struct ManagedTunnel {
     pub port: u16,
-    pub client: ConnectedClient,
+    pub client: AgentConn,
     accept_task: JoinHandle<()>,
 }
 
@@ -49,7 +49,7 @@ fn tunnels() -> &'static DashMap<u16, ManagedTunnel> {
 }
 
 /// Allocate and lazily bind a port for `client`. Returns the public port.
-pub async fn register(client: ConnectedClient, requested: Option<u16>) -> Result<u16, TcpError> {
+pub async fn register(client: AgentConn, requested: Option<u16>) -> Result<u16, TcpError> {
     let active = tunnels();
     let range = config().tcp_port_range;
 
@@ -149,7 +149,7 @@ fn classify_bind(e: &std::io::Error) -> TcpError {
     }
 }
 
-async fn accept_loop(listener: TcpListener, port: u16, client: ConnectedClient) {
+async fn accept_loop(listener: TcpListener, port: u16, client: AgentConn) {
     loop {
         match listener.accept().await {
             Ok((socket, peer)) => {

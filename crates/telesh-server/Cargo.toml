@@ -12,6 +12,17 @@ path = "src/main.rs"
 
 [dependencies]
 telesh-protocol = { path = "../telesh-protocol" }
+# Accounts + sessions persistence.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+sha2 = { workspace = true }
+toml = "0.8"
+# Direct data plane: the edge dials agents over iroh for HTTP/TCP ingress.
+iroh = { workspace = true }
+# Optional embedded relay (`--relay-serve`) for self-hosted deployments.
+iroh-relay = { version = "1.2", features = ["server"] }
+# TLS material loading for the embedded relay (`--relay-tls-cert`/`--relay-tls-key`).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
+rustls-pki-types = "1"
 tokio = { workspace = true }
 serde = { workspace = true }
 anyhow = { workspace = true }

@@ -7,10 +7,22 @@ pub mod frame;
 pub mod message;
 
 pub use frame::{decode, encode, CodecError};
+// Re-exported so the agent and server can name the P2P addressing type without
+// depending on `iroh-base` directly.
+pub use iroh_base::{EndpointAddr, EndpointId, PublicKey, Signature};
 pub use message::{
-    ClientHello, Frame, ServerHello, StreamPacket, TcpRegister, TcpRegisterResp, PROTOCOL_VERSION,
-    SUBDOMAIN_LEN,
+    login_message, AuthChallenge, AuthError, AuthMethod, AuthOk, AuthResponse, ClientHello,
+    ClientKind, Frame, P2PAddrResp, P2PAnnounce, P2PAnnounceResp, P2PLookup, ServerHello,
+    StreamPacket, TcpMapped, TcpRegister, TcpRegisterResp, TokenCheck, TokenCheckResp,
+    TrafficReport, LookupHello, LOGIN_DOMAIN, PROTOCOL_VERSION, SUBDOMAIN_LEN,
 };
+
+/// Acceptor -> dialer: the stream preamble was accepted and the local service
+/// is attached; payload may flow.
+pub const STREAM_ACK_OK: u8 = 0;
+/// Acceptor -> dialer: the stream was refused (bad credential/service, or the
+/// local service could not be dialed). Retrying the same stream will not help.
+pub const STREAM_ACK_ERR: u8 = 1;
 
 /// Random alphanumeric subdomain used when the agent does not request one.
 /// Mirrors the character set used by ngrok-style services.

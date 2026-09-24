@@ -11,3 +11,8 @@ serde = { workspace = true }
 bincode = { workspace = true }
 thiserror = { workspace = true }
 rand = { workspace = true }
+sha2 = { workspace = true }
+# Identity + addressing for the P2P control messages. Pulls in no runtime.
+iroh-base = { workspace = true }
+# HMAC-SHA256 for short-lived visitor access tokens.
+hmac = "0.12"

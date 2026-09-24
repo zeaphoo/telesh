@@ -3,6 +3,7 @@
 
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
+use iroh::Watcher;
 use std::net::SocketAddr;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -11,8 +12,8 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tracing::{debug, error, info, warn};
 
 use telesh_protocol::{
-    decode, encode, validate_subdomain, ClientHello, Frame, ServerHello, StreamPacket, TcpRegister,
-    TcpRegisterResp, PROTOCOL_VERSION,
+    decode, encode, validate_subdomain, Frame, ServerHello, StreamPacket, TcpRegister,
+    TcpRegisterResp,
 };
 
 use crate::local;
@@ -44,7 +45,19 @@ pub struct AgentOptions {
     pub local: SocketAddr,
     pub subdomain: Option<String>,
     pub secret: Option<String>,
-    pub agent_id: String, // persisted identity, stable across reconnects
+    /// Persistent iroh identity (used by `p2p` mode; carried so the same state
+    /// file is written back intact for http/tcp modes too).
+    pub secret_key: [u8; 32],
+    /// Cached login session, if any.
+    pub session: Option<Vec<u8>>,
+    /// Enrollment secret for first registration.
+    pub enrollment: Option<String>,
+    /// Friendly node name sent at login (defaults to the generated state name).
+    pub node_name: Option<String>,
+    /// Custom iroh relay URL for the direct data plane (None = public n0 relays).
+    pub relay: Option<String>,
+    /// Disable UPnP/PCP/NAT-PMP gateway probing for the iroh endpoint.
+    pub no_portmap: bool,
     /// When set, the assigned subdomain is persisted immediately on
     /// handshake success (so URLs survive restarts / SIGKILL).
     pub persist_file: Option<std::path::PathBuf>,
@@ -56,16 +69,68 @@ pub struct AgentOptions {
 /// Returns the subdomain assigned by the server (if any).
 pub async fn run_once(opts: &AgentOptions) -> Result<Option<String>> {
     let url = format!("ws://{}/tunnel", opts.control_addr);
-    info!(%url, agent_id = %opts.agent_id, "connecting to control server");
-    let (ws, _resp) = tokio_tungstenite::connect_async(&url)
+    info!(%url, "connecting to control server");
+    let (mut ws, _resp) = tokio_tungstenite::connect_async(&url)
         .await
         .with_context(|| format!("failed to connect to control server at {url}"))?;
 
-    let (mut sink, mut stream) = ws.split();
+    // ---- Login (keypair challenge-response, or a cached session) ----
+    let subdomain = resolve_subdomain(opts);
+    let (login, server_hello) = crate::auth::login(
+        &mut ws,
+        &opts.secret_key,
+        opts.session.clone(),
+        opts.enrollment.as_deref(),
+        subdomain,
+        opts.node_name.clone(),
+    )
+    .await?;
+    info!(account = %login.account, name = %login.display_name, "logged in");
 
-    // Framing: every outbound Frame -> one binary WS message.
+    let assigned_subdomain = match &server_hello {
+        ServerHello::Success {
+            sub_domain,
+            hostname,
+            ..
+        } => {
+            info!(hostname, "tunnel established — public URL: http://{hostname}");
+            // http tunnel: tell the local inspector what to log + where.
+            crate::inspect::set_info(crate::inspect::AgentInfo {
+                mode: "http".into(),
+                local: opts.local.to_string(),
+                remote: format!("http://{hostname}"),
+            });
+            if opts.tcp.is_none() {
+                crate::inspect::enable(&format!("http:{sub_domain}"));
+            }
+            // Persist identity + session + assigned subdomain immediately.
+            if let Some(path) = &opts.persist_file {
+                if let Err(e) = crate::state::save(
+                    path,
+                    &crate::state::AgentState {
+                        secret_key: opts.secret_key,
+                        subdomain: Some(sub_domain.clone()),
+                        session: Some(login.session.clone()),
+                        session_exp: login.expires_at,
+                        name: opts.node_name.clone(),
+                    },
+                ) {
+                    warn!(path = %path.display(), "cannot persist state: {e:#}");
+                }
+            }
+            Some(sub_domain.clone())
+        }
+        other => anyhow::bail!("server rejected tunnel: {other:?}"),
+    };
+    if let Some(sub) = &assigned_subdomain {
+        *subdomain_cell().lock().unwrap() = Some(sub.clone());
+    }
+    // ---- Frame pump ----
+    let (mut sink, mut stream) = ws.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<Frame>();
     let _ = OUTBOUND.set(tx.clone());
+    // Let data-plane streams ask the server to validate opaque tokens.
+    crate::token_check::set_control(tx.clone());
     let sink_task = tokio::spawn(async move {
         while let Some(frame) = rx.recv().await {
             let wire = match encode(&frame) {
@@ -81,56 +146,6 @@ pub async fn run_once(opts: &AgentOptions) -> Result<Option<String>> {
         }
         debug!("outbound sink task ended");
     });
-
-    // ---- Handshake (sent through the shared outbound queue) ----
-    let subdomain = resolve_subdomain(opts);
-    let hello = ClientHello {
-        protocol_version: PROTOCOL_VERSION,
-        agent_id: opts.agent_id.clone(),
-        sub_domain: subdomain.clone(),
-        auth_key: opts.secret.clone(),
-    };
-    tx.send(Frame::Hello(hello)).expect("sink task alive");
-
-    let server_hello = match wait_server_hello(&mut stream).await? {
-        Some(h) => h,
-        None => anyhow::bail!("control connection closed during handshake"),
-    };
-    let assigned_subdomain = match &server_hello {
-        ServerHello::Success { sub_domain, hostname, .. } => {
-            info!(hostname, "tunnel established — public URL: http://{hostname}");
-            // http tunnel: tell the local inspector what to log + where.
-            crate::inspect::set_info(crate::inspect::AgentInfo {
-                mode: "http".into(),
-                local: opts.local.to_string(),
-                remote: format!("http://{hostname}"),
-            });
-            if opts.tcp.is_none() {
-                crate::inspect::enable(&format!("http:{sub_domain}"));
-            }
-            // Persist the assignment immediately so a later kill/restart
-            // re-registers the same subdomain.
-            if let Some(path) = &opts.persist_file {
-                if let Err(e) = crate::state::save(
-                    path,
-                    &crate::state::AgentState {
-                        agent_id: opts.agent_id.clone(),
-                        subdomain: Some(sub_domain.clone()),
-                    },
-                ) {
-                    warn!(path = %path.display(), "cannot persist state: {e:#}");
-                }
-            }
-            Some(sub_domain.clone())
-        }
-        ServerHello::SubDomainInUse => anyhow::bail!("subdomain already in use on server"),
-        ServerHello::InvalidSubDomain => anyhow::bail!("invalid subdomain requested"),
-        ServerHello::AuthFailed => anyhow::bail!("authentication failed (wrong secret?)"),
-        ServerHello::Error(e) => anyhow::bail!("server error: {e}"),
-    };
-    if let Some(sub) = &assigned_subdomain {
-        *subdomain_cell().lock().unwrap() = Some(sub.clone());
-    }
 
     // ---- Raw-TCP tunnel registration (optional) ----
     if let Some(tcp) = &opts.tcp {
@@ -162,6 +177,48 @@ pub async fn run_once(opts: &AgentOptions) -> Result<Option<String>> {
         info!(port, server_host, "tcp tunnel established — public: tcp://{server_host}:{port}");
         info!("use e.g.: ssh -p {port} user@{server_host}");
     }
+
+    // ---- Direct data plane (iroh) ----
+    // Announce an iroh endpoint so the edge can route ingress traffic
+    // peer-to-peer; the WebSocket relay stays the fallback. Setup is
+    // non-blocking: the current address is announced now and re-announced as
+    // the endpoint learns routes (e.g. its home relay).
+    let serve = match crate::p2p::build_endpoint(
+        iroh::SecretKey::from_bytes(&opts.secret_key),
+        opts.relay.as_deref(),
+        opts.no_portmap,
+    )
+    .await
+    {
+        Ok(endpoint) => {
+            let mut watcher = endpoint.watch_addr();
+            let addr = watcher.get();
+            info!(endpoint = %addr.id.fmt_short(), "announced iroh data plane");
+            let _ = tx.send(Frame::IrohReady(addr));
+            let tx_updates = tx.clone();
+            tokio::spawn(async move {
+                while let Ok(addr) = watcher.updated().await {
+                    if tx_updates.send(Frame::IrohReady(addr)).is_err() {
+                        break;
+                    }
+                }
+            });
+            // http/tcp expose a single port; the edge sends an empty service
+            // name, so map `""` to the one local target.
+            let mut targets = std::collections::HashMap::new();
+            targets.insert(String::new(), opts.local);
+            Some(tokio::spawn(crate::p2p::serve_endpoint(
+                endpoint,
+                std::sync::Arc::new(targets),
+                opts.secret.clone(),
+                Some(login.account.clone()),
+            )))
+        }
+        Err(e) => {
+            warn!("iroh endpoint unavailable, relay only: {e:#}");
+            None
+        }
+    };
 
     // ---- Serve frames ----
     loop {
@@ -195,6 +252,9 @@ pub async fn run_once(opts: &AgentOptions) -> Result<Option<String>> {
         }
     }
 
+    if let Some(serve) = serve {
+        serve.abort();
+    }
     sink_task.abort();
     Ok(assigned_subdomain)
 }
@@ -211,22 +271,6 @@ fn resolve_subdomain(opts: &AgentOptions) -> Option<String> {
     // Reconnect after an assigned (random) subdomain: reuse it to keep the
     // public URL stable. The server replaces our stale connection anyway.
     subdomain_cell().lock().unwrap().clone()
-}
-
-async fn wait_server_hello<S>(stream: &mut S) -> Result<Option<ServerHello>>
-where
-    S: StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
-{
-    match tokio::time::timeout(Duration::from_secs(10), stream.next()).await {
-        Ok(Some(Ok(WsMessage::Binary(data)))) => match decode(&data)? {
-            Frame::ServerHello(h) => Ok(Some(h)),
-            other => {
-                anyhow::bail!("expected ServerHello, got {other:?}")
-            }
-        },
-        Ok(Some(Ok(_))) => anyhow::bail!("expected ServerHello, got non-binary message"),
-        _ => Ok(None),
-    }
 }
 
 /// Wait for the server's reply to a `TcpRegister` request.
@@ -289,6 +333,30 @@ async fn handle_frame(
         }
         Frame::Hello(_) | Frame::ServerHello(_) => {
             warn!("unexpected frame after handshake");
+            true
+        }
+        Frame::TokenCheckResp(r) => {
+            crate::token_check::resolve(r.id, if r.ok { Some(r.expires_at) } else { None });
+            true
+        }
+        Frame::TokenCheck(_) => {
+            warn!("unexpected TokenCheck from server");
+            true
+        }
+        Frame::P2PAnnounce(_)
+        | Frame::P2PAnnounceResp(_)
+        | Frame::P2PLookup(_)
+        | Frame::P2PAddr(_)
+        | Frame::Lookup(_)
+        | Frame::IrohReady(_)
+        | Frame::Traffic(_)
+        | Frame::TcpMapped(_)
+        | Frame::AuthChallenge(_)
+        | Frame::AuthResponse(_)
+        | Frame::AuthOk(_)
+        | Frame::AuthError(_) => {
+            // P2P frames are handled by the dedicated `p2p` module, not here.
+            warn!("unexpected P2P frame after handshake");
             true
         }
     }

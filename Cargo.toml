@@ -6,7 +6,7 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-rust-version = "1.85"
+rust-version = "1.91"
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -23,3 +23,8 @@ rand = "0.8"
 sha2 = "0.10"
 axum = { version = "0.8", features = ["ws"] }
 tokio-tungstenite = "0.24"
+# P2P data plane: hole-punched QUIC with relay fallback and built-in
+# UPnP/PCP/NAT-PMP port mapping. `iroh-base` is the dependency-light subset
+# (identity + addressing) used by the wire protocol.
+iroh = "1.2"
+iroh-base = "1.2"
