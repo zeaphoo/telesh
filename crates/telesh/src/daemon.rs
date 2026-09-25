@@ -95,7 +95,7 @@ async fn session(creds: &Credentials, shared: &Arc<Shared>) -> Result<()> {
     }
     let account = login.account.clone();
 
-    shared.set_ports(crate::ports::scan());
+    shared.set_ports(crate::ports::scan_and_probe().await);
 
     // ---- 出站队列(数据面校验令牌也用它) ----
     let (mut sink, mut stream) = ws.split();
@@ -178,7 +178,7 @@ async fn session(creds: &Credentials, shared: &Arc<Shared>) -> Result<()> {
         tokio::select! {
             _ = shared.notify.notified() => {}
             _ = tick.tick() => {
-                shared.set_ports(crate::ports::scan());
+                shared.set_ports(crate::ports::scan_and_probe().await);
                 // P2P 流量服务端看不到,agent 定期上报。
                 for t in crate::p2p::drain_traffic() {
                     let _ = tx.send(Frame::Traffic(t));
@@ -429,6 +429,7 @@ async fn reconcile(
             Entry::Mirror {
                 local_port,
                 remote,
+                secret,
             } => {
                 let (account_id, name) = match remote.split_once('/') {
                     Some((a, n)) if !a.is_empty() && !n.is_empty() => {
@@ -452,7 +453,7 @@ async fn reconcile(
                     account: account_id,
                     name,
                     local: addr,
-                    secret: None,
+                    secret: secret.clone(),
                     no_portmap: true,
                     retry_wait: Duration::from_secs(30),
                 };

@@ -4,9 +4,16 @@
 //! 反查进程。非 root 只能看到本用户的进程,这属于正常;容器内看到的就是容器里的端口。
 
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::OnceLock;
+use std::time::Duration;
 
+use dashmap::DashMap;
+use futures::StreamExt;
 use serde::Serialize;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+use tokio::time::timeout;
 
 /// 一个正在监听的本地端口。
 #[derive(Debug, Clone, Serialize)]
@@ -16,11 +23,34 @@ pub struct PortInfo {
     pub addr: String,
     pub pid: Option<u32>,
     pub process: Option<String>,
-    /// 端口表的启发式建议(**不是**探测结果)。
+    /// 看起来是 HTTP 吗:探测结果;还没探测过时回落到端口表启发式。
     pub http_hint: bool,
+    /// 探测到的 `Server:` 头(探测结果里没有就是 None)。
+    pub server: Option<String>,
+    /// 是否已经真的探测过(UI 用来区分"建议"和"检测到")。
+    pub probed: bool,
     /// 该端口只监听 IPv6 回环/任意地址(数据面拨号要用 `::1`)。
     pub v6_only: bool,
 }
+
+/// 一次探测的结论。
+#[derive(Debug, Clone, Default)]
+struct Probe {
+    http: bool,
+    server: Option<String>,
+}
+
+/// port → 探测结论(进程内缓存;端口消失时清掉,服务重启后会重新探测)。
+static PROBES: OnceLock<DashMap<u16, Probe>> = OnceLock::new();
+
+fn probes() -> &'static DashMap<u16, Probe> {
+    PROBES.get_or_init(DashMap::new)
+}
+
+/// 一次探测的连接与读取超时。
+const PROBE_TIMEOUT: Duration = Duration::from_millis(700);
+/// 同时探测多少个端口。
+const PROBE_CONCURRENCY: usize = 8;
 
 /// 常见 HTTP 端口(启发式建议,不代表真实协议)。
 const HTTP_HINT_PORTS: &[u16] = &[
@@ -45,6 +75,8 @@ pub fn scan() -> Vec<PortInfo> {
             pid,
             process: process.clone(),
             http_hint: HTTP_HINT_PORTS.contains(&port),
+            server: None,
+            probed: false,
             v6_only: v6,
         });
         // IPv4 监听优先展示,并且只要有一个 v4 监听就不算 v6-only。
@@ -56,6 +88,73 @@ pub fn scan() -> Vec<PortInfo> {
     let mut out: Vec<PortInfo> = by_port.into_values().collect();
     out.sort_by_key(|p| p.port);
     out
+}
+
+/// 扫一遍监听端口,并**对没探测过的端口做一次 HTTP 探测**。
+///
+/// 探测会真的向本地服务发一个 `HEAD /`(有副作用),所以:
+/// 每个端口在一个进程生命周期内只探一次;端口消失后缓存清除,重新出现会再探一次。
+pub async fn scan_and_probe() -> Vec<PortInfo> {
+    let mut list = scan();
+
+    // 端口消失 → 清掉缓存,服务重启后会重新探测。
+    let live: std::collections::HashSet<u16> = list.iter().map(|p| p.port).collect();
+    probes().retain(|port, _| live.contains(port));
+
+    // 未知端口排队探测。
+    let todo: Vec<(u16, bool)> = list
+        .iter()
+        .filter(|p| !probes().contains_key(&p.port))
+        .map(|p| (p.port, p.v6_only))
+        .collect();
+
+    let results: Vec<(u16, Probe)> = futures::stream::iter(todo)
+        .map(|(port, v6_only)| async move { (port, probe_http(port, v6_only).await) })
+        .buffer_unordered(PROBE_CONCURRENCY)
+        .collect()
+        .await;
+    for (port, probe) in results {
+        probes().insert(port, probe);
+    }
+
+    for p in list.iter_mut() {
+        if let Some(probe) = probes().get(&p.port) {
+            p.http_hint = probe.http;
+            p.server = probe.server.clone();
+            p.probed = true;
+        }
+    }
+    list
+}
+
+/// 向本地端口发一个最小的 HTTP 请求,判断它是不是 HTTP。
+async fn probe_http(port: u16, v6_only: bool) -> Probe {
+    let ip = if v6_only {
+        IpAddr::from(Ipv6Addr::LOCALHOST)
+    } else {
+        IpAddr::from(Ipv4Addr::LOCALHOST)
+    };
+    let Ok(Ok(mut sock)) = timeout(PROBE_TIMEOUT, TcpStream::connect((ip, port))).await else {
+        return Probe::default();
+    };
+    let req = b"HEAD / HTTP/1.0\r\nHost: localhost\r\nUser-Agent: telesh-probe\r\n\r\n";
+    if timeout(PROBE_TIMEOUT, sock.write_all(req)).await.is_err() {
+        return Probe::default();
+    }
+    let mut buf = [0u8; 1024];
+    let Ok(Ok(n)) = timeout(PROBE_TIMEOUT, sock.read(&mut buf)).await else {
+        return Probe::default();
+    };
+    let head = String::from_utf8_lossy(&buf[..n]);
+    if !head.starts_with("HTTP/") {
+        return Probe::default();
+    }
+    let server = head
+        .lines()
+        .find(|l| l.to_ascii_lowercase().starts_with("server:"))
+        .map(|l| l[l.find(':').map_or(0, |i| i + 1)..].trim().to_string())
+        .filter(|s| !s.is_empty());
+    Probe { http: true, server }
 }
 
 /// `(address, port, inode)`,只取 LISTEN 状态。

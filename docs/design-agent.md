@@ -8,9 +8,10 @@
   不会误删重连后新连接的注册。
 - 目标表按"当前已应用的条目"整体重建:同一个本地端口可以同时发布为 HTTP 和 TCP,
   逐条增删会互相误删。
-- 镜像已经搬进 UI;`telesh connect` 子命令已删除。
-- 已知限制:UI 上的镜像是 lookup-only 连接,若服务端配置了 `--lookup-secret`,目前
-  没有地方填这个密钥。
+- 镜像已经搬进 UI;`telesh connect` 子命令已删除。镜像条目带可选的 `secret`
+  (服务端配了 `--lookup-secret` / `--secret` 时,lookup 连接要带它)。
+- HTTP 判定**真的探测**:每个端口一个进程生命周期内探一次(发一次 `HEAD /`,700ms
+  超时,8 并发),端口消失后清缓存以便服务重启后重探;没探过时回落到端口表启发式。
 
 **问题**:现在一个 `telesh` 进程只服务一个隧道(`telesh http 8000 -s app` /
 `telesh tcp 22` / `telesh p2p 22`),发布方式全在启动参数里。于是同一台机器开 5 个
@@ -62,9 +63,11 @@ telesh <control-server>          # 唯一的必需参数
 |---|---|
 | 权威 | 用户在 UI 上选(HTTP / TCP / P2P) |
 | 默认 | 端口表启发式:80/443/3000/5000/8000/8080/8443… 标为 HTTP 候选 |
-| 可选 | 探测:发一次 `GET / HTTP/1.0\r\nHost: localhost\r\n\r\n`,看首行是否 `HTTP/1.`,顺带展示 `Server:` 头 |
+| 探测(已实现) | 发一次 `HEAD / HTTP/1.0`,看首行是否 `HTTP/`,顺带取 `Server:` 头 |
 
-探测会真的打到应用,所以默认只做端口表启发式,探测放在"建议"按钮后面(待定项 §12)。
+探测会真的打到应用,所以做了三层保护:**每个端口只探一次**(进程生命周期内)、
+700ms 超时 + 8 并发、端口消失后清缓存。`/api/ports` 用 `probed` 区分"检测到"和
+"建议"(未探测时回落端口表)。
 
 ## 5. 发布模型与配置
 
@@ -76,9 +79,11 @@ telesh <control-server>          # 唯一的必需参数
   {"kind": "http",   "local_port": 8000, "sub_domain": "app"},
   {"kind": "tcp",    "local_port": 22,   "remote_port": null},
   {"kind": "p2p",    "local_port": 5432, "name": "db"},
-  {"kind": "mirror", "remote": "000012345/web", "local_port": 18000}
+  {"kind": "mirror", "local_port": 18000, "remote": "000012345/web", "secret": "…"}
 ]
 ```
+
+`mirror.secret` 可选:服务端配了 `--lookup-secret` / `--secret` 时,lookup 连接必须带它。
 
 - `kind` 判别联合;`local_port` 在发布条目里是"要暴露的本地服务",在 mirror 条目里是
   "要绑定的本地监听端口"(字段名已说明含义,避免混淆)。
@@ -214,5 +219,9 @@ iroh:  [kind][u16 cred_len][cred][u16 service_len][service] → [u8 ack]
 
 ## 14. 待定
 
-- HTTP 探测(§4)做不做:会真的打到应用。
-- UI 是否加重放/请求日志之外的权限(例如"允许非本机访问 UI")——目前倾向不做。
+- **iroh 流的鉴权**:边车目前用 kind-0 共享密钥,而 daemon 给 `serve_endpoint` 传的是
+  `secret: None`,等于不校验;目标名又是可猜的本地端口。任何拿到 agent `EndpointAddr`
+  的人都能直连它已发布的目标,而发布一个 P2P 服务就会公开这个地址。建议让边车也改用
+  访问令牌(kind 1 + `token_check`),复用现成机制。
+- UI 是否允许非本机访问(目前只 bind `127.0.0.1`,倾向不做)。
+- `--secret` / `--lookup-secret` / `--enrollment-secret` 是否可以合并成一个开关。

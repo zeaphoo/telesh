@@ -30,7 +30,13 @@ pub enum Entry {
     /// 暴露到 P2P 网络(服务名)。
     P2p { local_port: u16, name: String },
     /// 把远端服务镜像到本地端口(访问方角色)。
-    Mirror { local_port: u16, remote: String },
+    Mirror {
+        local_port: u16,
+        remote: String,
+        /// 服务端配置了 `--lookup-secret` / `--secret` 时,lookup 连接要带它。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        secret: Option<String>,
+    },
 }
 
 impl Entry {

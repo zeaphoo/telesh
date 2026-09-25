@@ -97,10 +97,6 @@ pub struct Config {
     #[arg(long, env = "TELESH_DATA_ADDR", default_value = "0.0.0.0:9008")]
     pub data_addr: SocketAddr,
 
-    /// Max lifetime of a pending stream that the agent never accepts (ms).
-    #[arg(long, env = "TELESH_ACCEPT_TIMEOUT_MS", default_value = "10000")]
-    pub accept_timeout_ms: u64,
-
     /// Port range for raw-TCP tunnels (e.g. 18000-18100). If the requested
     /// port is outside this range the registration is rejected.
     #[arg(long, value_parser = clap::value_parser!(TcpPortRange), env = "TELESH_TCP_RANGE", default_value = "18000-18100")]
