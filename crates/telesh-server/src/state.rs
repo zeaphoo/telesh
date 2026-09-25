@@ -5,7 +5,6 @@
 //! distributed registry + gossip later.
 
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
 use dashmap::mapref::entry::Entry;
@@ -14,7 +13,7 @@ use iroh::Endpoint;
 use sqlx::SqlitePool;
 use tokio::sync::mpsc::UnboundedSender;
 
-use telesh_protocol::{EndpointAddr, EndpointId, Frame, P2PAddrResp, P2PAnnounce, StreamPacket};
+use telesh_protocol::{EndpointAddr, EndpointId, Frame, P2PAddrResp, P2PAnnounce};
 
 use crate::registry::Registry;
 
@@ -50,6 +49,14 @@ pub static P2P_DIR: OnceLock<DashMap<String, P2pEntry>> = OnceLock::new();
 /// plane (HTTP/TCP ingress). `None` until the server binds it at startup.
 pub static SERVER_ENDPOINT: OnceLock<Endpoint> = OnceLock::new();
 
+/// iroh relay URL announced to clients after login (and the one the gateway
+/// dials through). `None` means iroh's default (n0) relays.
+pub static RELAY_URL: OnceLock<Option<String>> = OnceLock::new();
+
+/// Data-plane address announced to agents after login (the agent-initiated
+/// yamux endpoint). `None` means no data plane.
+pub static DATA_ADDR: OnceLock<Option<String>> = OnceLock::new();
+
 /// Accounts / keys / sessions.
 pub static DB: OnceLock<SqlitePool> = OnceLock::new();
 
@@ -61,16 +68,9 @@ pub static SERVER_ID: OnceLock<[u8; 32]> = OnceLock::new();
 /// `telesh connect` never has to re-look-up.
 pub static P2P_SUBS: OnceLock<DashMap<String, Vec<UnboundedSender<Frame>>>> = OnceLock::new();
 
-/// Ingress-side stream pumps, keyed by stream_id. The sender side receives
-/// `Data`/`End`/`Refused` packets from the agent and writes them to the
-/// public TCP socket.
-pub static ACTIVE_STREAMS: OnceLock<DashMap<u64, UnboundedSender<StreamPacket>>> = OnceLock::new();
-
-static NEXT_STREAM_ID: AtomicU64 = AtomicU64::new(1);
 
 pub async fn init() -> Result<()> {
     let _ = REGISTRY.set(Registry::new());
-    let _ = ACTIVE_STREAMS.set(DashMap::new());
     let _ = P2P_DIR.set(DashMap::new());
     let _ = P2P_SUBS.set(DashMap::new());
     let _ = SERVER_ID.set(rand::random());
@@ -94,17 +94,8 @@ pub fn server_id() -> &'static [u8; 32] {
     SERVER_ID.get().expect("server id not initialized")
 }
 
-/// Allocate a globally unique stream id.
-pub fn next_stream_id() -> u64 {
-    NEXT_STREAM_ID.fetch_add(1, Ordering::Relaxed)
-}
-
 pub fn registry() -> &'static Registry {
     REGISTRY.get().expect("server state not initialized")
-}
-
-pub fn active_streams() -> &'static DashMap<u64, UnboundedSender<StreamPacket>> {
-    ACTIVE_STREAMS.get().expect("server state not initialized")
 }
 
 pub fn p2p_dir() -> &'static DashMap<String, P2pEntry> {
@@ -188,6 +179,24 @@ pub fn set_server_endpoint(endpoint: Endpoint) {
 /// The server's iroh endpoint for dialing agents, if it was started with one.
 pub fn server_endpoint() -> Option<&'static Endpoint> {
     SERVER_ENDPOINT.get()
+}
+
+pub fn set_relay_url(url: Option<String>) {
+    let _ = RELAY_URL.set(url);
+}
+
+/// The relay URL clients are told to use, if the server runs/uses one.
+pub fn relay_url() -> Option<String> {
+    RELAY_URL.get().cloned().flatten()
+}
+
+pub fn set_data_addr(addr: Option<String>) {
+    let _ = DATA_ADDR.set(addr);
+}
+
+/// The data-plane address agents are told to dial, if the server runs one.
+pub fn data_addr() -> Option<String> {
+    DATA_ADDR.get().cloned().flatten()
 }
 
 /// Drop every P2P service owned by `account` (called when the agent's control

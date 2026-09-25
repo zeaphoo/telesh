@@ -1,46 +1,29 @@
-//! telesh-protocol — wire protocol shared by the telesh agent and server.
+//! telesh-protocol — telesh agent 与 server 之间的线上协议。
 //!
-//! A single long-lived WebSocket control connection carries both control
-//! messages and multiplexed stream data (see [`message`] and [`frame`]).
+//! * **控制面**(`docs/design-control.md`):JSON 文本,信封
+//!   `{"type":"…","data":{…}}`,走 WebSocket text 帧。见 [`message`] / [`frame`]。
+//! * **数据面信令流**(`docs/design-dataplane.md`):`[u32 BE len][CBOR]`,走 yamux
+//!   stream 1。见 [`signal`]。
 
 pub mod frame;
 pub mod message;
+pub mod signal;
 
 pub use frame::{decode, encode, CodecError};
-// Re-exported so the agent and server can name the P2P addressing type without
-// depending on `iroh-base` directly.
+// 供 agent / server 直接给 iroh 寻址类型命名,不必自己依赖 `iroh-base`。
 pub use iroh_base::{EndpointAddr, EndpointId, PublicKey, Signature};
 pub use message::{
-    login_message, AuthChallenge, AuthError, AuthMethod, AuthOk, AuthResponse, ClientHello,
-    ClientKind, Frame, P2PAddrResp, P2PAnnounce, P2PAnnounceResp, P2PLookup, ServerHello,
-    StreamPacket, TcpMapped, TcpRegister, TcpRegisterResp, TokenCheck, TokenCheckResp,
-    TrafficReport, LookupHello, LOGIN_DOMAIN, PROTOCOL_VERSION, SUBDOMAIN_LEN,
+    login_message, random_subdomain, validate_subdomain, AuthChallenge, AuthError, AuthMethod,
+    AuthOk, AuthResponse, ClientHello, ClientKind, Frame, LookupHello, P2PAddrResp, P2PAnnounce,
+    P2PAnnounceResp, P2PLookup, ServerHello, TcpMapped, TcpRegister, TcpRegisterResp, TokenCheck,
+    TokenCheckResp, TrafficReport, LOGIN_DOMAIN, MAX_MESSAGE_BYTES, SUBDOMAIN_LEN,
+};
+pub use signal::{
+    AuthRequest, AuthResponse as SignalAuthResponse, AuthStatus, SignalCodec, SignalCodecError,
+    SignalFrame, MAX_SIGNAL_FRAME,
 };
 
-/// Acceptor -> dialer: the stream preamble was accepted and the local service
-/// is attached; payload may flow.
+/// Acceptor → dialer:流前导通过,本地服务已接上,可以开始发 payload。
 pub const STREAM_ACK_OK: u8 = 0;
-/// Acceptor -> dialer: the stream was refused (bad credential/service, or the
-/// local service could not be dialed). Retrying the same stream will not help.
+/// Acceptor → dialer:流被拒绝(凭据/服务名不对,或本地服务连不上),重试无用。
 pub const STREAM_ACK_ERR: u8 = 1;
-
-/// Random alphanumeric subdomain used when the agent does not request one.
-/// Mirrors the character set used by ngrok-style services.
-pub fn random_subdomain() -> String {
-    use rand::Rng;
-    const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
-    let mut rng = rand::thread_rng();
-    (0..SUBDOMAIN_LEN)
-        .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
-        .collect()
-}
-
-/// Validate a user-requested subdomain: `[a-z0-9-]`, 1..=63 chars.
-pub fn validate_subdomain(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= 63
-        && s.bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        && !s.starts_with('-')
-        && !s.ends_with('-')
-}

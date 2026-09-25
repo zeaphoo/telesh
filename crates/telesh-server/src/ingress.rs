@@ -7,23 +7,19 @@
 //! bidirectional data loop.
 
 use std::io;
-use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-use telesh_protocol::{Frame, StreamPacket};
+
 
 use crate::config::config;
 use crate::metrics;
 use crate::registry::AgentConn;
-use crate::state::{active_streams, next_stream_id, registry};
+use crate::state::registry;
 
 const MAX_PEEK_BYTES: usize = 4096;
-/// How long to wait for the agent to accept a stream after Init.
-const ACCEPT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Bind the HTTP ingress and accept connections forever.
 pub async fn run_ingress() -> anyhow::Result<()> {
@@ -71,20 +67,21 @@ async fn handle_socket(mut socket: TcpStream) -> anyhow::Result<()> {
 
 /// Allocate a path for `socket` and pump bytes to the owning agent.
 ///
-/// Prefers the direct iroh data plane when the agent announced one, falling
-/// back to the WebSocket relay on any failure. Used by both HTTP-routed and
-/// raw-TCP tunnels; `traffic_key` names the tunnel in metrics.
-pub async fn open_stream(client: AgentConn, socket: TcpStream, traffic_key: String) {
+/// Order: direct iroh data plane (opportunistic) → agent-initiated data plane →
+/// refuse the public connection. `traffic_key` names the tunnel in metrics and
+/// also decides whether an error response makes sense (HTTP tunnels only).
+pub async fn open_stream(client: AgentConn, mut socket: TcpStream, traffic_key: String) {
+    let http = traffic_key.starts_with("http:");
+
+    // 1) iroh direct path.
     if let Some(endpoint) = crate::state::server_endpoint() {
         if let Some(addr) = registry().iroh_addr(&client.agent_id) {
             match crate::gateway::dial(endpoint, addr).await {
                 Ok((conn, mut send, mut recv)) => {
-                    // The agent authenticates the edge, attaches the local
-                    // service, then acks; only then does payload flow.
                     if let Err(e) =
                         crate::gateway::write_handshake(&mut send, &config().secret, "").await
                     {
-                        debug!("iroh prelude failed, falling back to relay: {e:#}");
+                        debug!("iroh prelude failed, falling back to the data plane: {e:#}");
                         drop(conn);
                     } else {
                         match crate::gateway::read_ack(&mut recv).await {
@@ -104,105 +101,123 @@ pub async fn open_stream(client: AgentConn, socket: TcpStream, traffic_key: Stri
                                 return;
                             }
                             Err(e) => {
-                                debug!("iroh ack lost, falling back to relay: {e:#}");
+                                debug!("iroh ack lost, falling back to the data plane: {e:#}");
                                 drop(conn);
                             }
                         }
                     }
                 }
-                Err(e) => debug!("iroh dial failed, falling back to relay: {e:#}"),
+                Err(e) => debug!("iroh dial failed, falling back to the data plane: {e:#}"),
             }
         }
     }
-    open_stream_relay(client, socket, traffic_key).await;
+
+    // 2) Agent-initiated data plane.
+    if let Some(handle) = registry().data_handle(&client.agent_id) {
+        match handle.open_stream().await {
+            Ok(stream) => {
+                debug!(agent_id = %client.agent_id, key = %traffic_key, "routing over the data plane");
+                metrics::inc_conns();
+                let (up, down) = pump_data(socket, stream, http).await;
+                metrics::add_traffic(&traffic_key, up, down);
+                metrics::dec_conns();
+                return;
+            }
+            Err(e) => warn!(agent_id = %client.agent_id, "cannot open a data stream: {e:#}"),
+        }
+    }
+
+    // 3) No path to the agent.
+    warn!(agent_id = %client.agent_id, key = %traffic_key, "no data path for this agent");
+    if http {
+        let _ = write_error(&mut socket, "503", "Tunnel data path unavailable").await;
+    }
 }
 
-/// Relay path: signal the agent over the control connection and multiplex the
-/// stream over the same WebSocket.
-async fn open_stream_relay(client: AgentConn, mut socket: TcpStream, traffic_key: String) {
-    metrics::inc_conns();
-    let stream_id = next_stream_id();
-    let (tx, mut rx) = mpsc::unbounded_channel::<StreamPacket>();
-    active_streams().insert(stream_id, tx.clone());
-    if client
-        .tx
-        .send(Frame::stream(StreamPacket::Init { stream_id }))
-        .is_err()
+/// Pump a public TCP connection over a data-plane yamux stream.
+///
+/// The stream is a plain byte pipe. yamux turns a stream reset into a clean EOF,
+/// so the agent's refusal is *not* observable as an error: the rule is "the agent
+/// closed without sending a single byte back", which for an HTTP tunnel can only
+/// mean it could not dial the local service. That maps to 502.
+///
+/// Whichever direction finishes first ends the pump: the agent side finishing
+/// means the response is complete (we stop reading the request body), the public
+/// side finishing means the client half-closed (we FIN the agent stream and let
+/// it drain its response). Either way the agent stream is closed with an explicit
+/// `shutdown` (FIN) — dropping it would send RST and can lose buffered data.
+async fn pump_data(socket: TcpStream, stream: yamux::Stream, http: bool) -> (u64, u64) {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::Arc;
+    use tokio_util::compat::FuturesAsyncReadCompatExt;
+
+    let (mut pub_r, mut pub_w) = socket.into_split();
+    let (mut s_r, mut s_w) = tokio::io::split(stream.compat());
+    let wrote_back = Arc::new(AtomicBool::new(false));
+    let up_bytes = Arc::new(AtomicU64::new(0));
+
+    let down_res: io::Result<u64>;
     {
-        active_streams().remove(&stream_id);
-        warn!(agent_id = %client.agent_id, "agent control channel closed");
-        return;
-    }
-
-    let (mut read_half, mut write_half) = socket.split();
-    let agent_tx = client.tx.clone();
-    let accept_deadline = tokio::time::Instant::now() + ACCEPT_TIMEOUT;
-
-    // Bidirectional pump, driven by a single select loop:
-    //  - public socket -> agent, as Data frames
-    //  - agent (Data/End/Refused) -> public socket
-    let mut buf = vec![0u8; 8192];
-    let mut accepted = false;
-    loop {
-        if !accepted && tokio::time::Instant::now() >= accept_deadline {
-            debug!(stream_id, "agent did not accept stream in time, closing");
-            break;
-        }
-
-        tokio::select! {
-            biased;
-            // Public socket closed / error / EOF: stop.
-            read_res = read_half.read(&mut buf) => {
-                match read_res {
+        let counter = up_bytes.clone();
+        let up = async {
+            let mut buf = vec![0u8; 16 * 1024];
+            loop {
+                match pub_r.read(&mut buf).await {
                     Ok(0) => break,
                     Ok(n) => {
-                        metrics::add_traffic(&traffic_key, n as u64, 0);
-                        if agent_tx
-                            .send(Frame::stream(StreamPacket::Data {
-                                stream_id,
-                                data: buf[..n].to_vec(),
-                            }))
-                            .is_err()
-                        {
-                            debug!(stream_id, "agent control channel closed mid-stream");
+                        if s_w.write_all(&buf[..n]).await.is_err() {
                             break;
                         }
+                        counter.fetch_add(n as u64, Ordering::Relaxed);
                     }
-                    Err(e) => {
-                        debug!(stream_id, "ingress read error: {e}");
-                        break;
-                    }
+                    Err(_) => break,
                 }
             }
-            // Agent traffic for this stream.
-            packet = rx.recv() => {
-                match packet {
-                    Some(StreamPacket::Data { data, .. }) => {
-                        accepted = true;
-                        metrics::add_traffic(&traffic_key, 0, data.len() as u64);
-                        if write_half.write_all(&data).await.is_err() {
-                            debug!(stream_id, "ingress write error");
-                            break;
-                        }
+        };
+        let flag = wrote_back.clone();
+        let down = async {
+            let mut buf = vec![0u8; 16 * 1024];
+            let mut total = 0u64;
+            loop {
+                match s_r.read(&mut buf).await {
+                    Ok(0) => return Ok(total),
+                    Ok(n) => {
+                        flag.store(true, Ordering::Relaxed);
+                        pub_w.write_all(&buf[..n]).await?;
+                        total += n as u64;
                     }
-                    Some(StreamPacket::Refused { .. }) => {
-                        let _ = write_half
-                            .write_all(b"HTTP/1.1 502\r\nContent-Length: 26\r\n\r\nTunnel refused: local connection failed")
-                            .await;
-                        break;
-                    }
-                    // Agent closed the stream.
-                    Some(StreamPacket::End { .. }) | None => break,
-                    Some(StreamPacket::Init { .. }) => {}
+                    Err(e) => return Err(e),
                 }
+            }
+        };
+        tokio::pin!(up, down);
+        tokio::select! {
+            _ = &mut up => {
+                // 公网侧结束:agent 流已写完,等它把响应发完。
+                down_res = down.await;
+            }
+            d = &mut down => {
+                // agent 侧结束:响应发完了,或者本地拨号失败后直接关闭。
+                down_res = d;
             }
         }
     }
+    // 两个泵都已停,借用结束:显式半关闭而不是 RST。
+    let _ = s_w.shutdown().await;
 
-    // Tell the agent the stream is over (idempotent on its side).
-    let _ = agent_tx.send(Frame::stream(StreamPacket::End { stream_id }));
-    active_streams().remove(&stream_id);
-    metrics::dec_conns();
+    let down_bytes = down_res.as_ref().copied().unwrap_or(0);
+    // 没有任何回包 = 拒绝(合法 HTTP 响应至少有一个状态行)。
+    if !wrote_back.load(Ordering::Relaxed) && http {
+        let _ = pub_w
+            .write_all(
+                b"HTTP/1.1 502
+Content-Length: 26
+
+Tunnel refused: local connection failed",
+            )
+            .await;
+    }
+    (up_bytes.load(Ordering::Relaxed), down_bytes)
 }
 
 /// Peek the first HTTP request and return `(host, x-forwarded-for)`.

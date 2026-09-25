@@ -83,6 +83,20 @@ pub struct Config {
     #[arg(long, env = "TELESH_RELAY_SERVE")]
     pub relay_serve: Option<SocketAddr>,
 
+    /// Public URL of the iroh relay announced to agents after login (and used
+    /// by the server's own gateway). When empty it is derived from the relay
+    /// config file's `url`, or from the embedded relay plus `--public-host`.
+    /// Leave it empty to keep agents on iroh's default (n0) relays.
+    #[arg(long, env = "TELESH_RELAY_URL", default_value = "")]
+    pub relay_url: String,
+
+    /// Address for the data plane: agents dial this and speak yamux over TCP.
+    /// Announced to agents in `server_hello.success.data_addr`; an agent
+    /// replaces an unspecified host (`0.0.0.0` / `::`) with the host it used
+    /// for the control connection.
+    #[arg(long, env = "TELESH_DATA_ADDR", default_value = "0.0.0.0:9008")]
+    pub data_addr: SocketAddr,
+
     /// Max lifetime of a pending stream that the agent never accepts (ms).
     #[arg(long, env = "TELESH_ACCEPT_TIMEOUT_MS", default_value = "10000")]
     pub accept_timeout_ms: u64,

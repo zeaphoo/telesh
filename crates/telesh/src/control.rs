@@ -12,11 +12,9 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tracing::{debug, error, info, warn};
 
 use telesh_protocol::{
-    decode, encode, validate_subdomain, Frame, ServerHello, StreamPacket, TcpRegister,
-    TcpRegisterResp,
+    decode, encode, validate_subdomain, Frame, ServerHello, TcpRegister, TcpRegisterResp,
 };
 
-use crate::local;
 
 // The agent's WebSocket connection (split): a sink task owns the write half
 // and drains this queue, so every component (main loop + local sessions) can
@@ -54,8 +52,6 @@ pub struct AgentOptions {
     pub enrollment: Option<String>,
     /// Friendly node name sent at login (defaults to the generated state name).
     pub node_name: Option<String>,
-    /// Custom iroh relay URL for the direct data plane (None = public n0 relays).
-    pub relay: Option<String>,
     /// Disable UPnP/PCP/NAT-PMP gateway probing for the iroh endpoint.
     pub no_portmap: bool,
     /// When set, the assigned subdomain is persisted immediately on
@@ -125,6 +121,36 @@ pub async fn run_once(opts: &AgentOptions) -> Result<Option<String>> {
     if let Some(sub) = &assigned_subdomain {
         *subdomain_cell().lock().unwrap() = Some(sub.clone());
     }
+    // The relay to use for the direct data plane is the server's choice,
+    // announced with the handshake — agents carry no relay configuration.
+    let relay = server_hello.relay_url().map(str::to_string);
+    if let Some(url) = &relay {
+        info!(relay = %url, "using server-announced iroh relay");
+    }
+
+    // ---- Data plane (agent-initiated) ----
+    // The server announces its data address with the handshake. http/tcp payload
+    // takes this path whenever a direct iroh connection is not available.
+    let data_task = match server_hello.data_addr() {
+        Some(announced) => match crate::data::resolve_addr(announced, &opts.control_addr).await {
+            Some(addr) => {
+                info!(%addr, "starting the data-plane client");
+                Some(tokio::spawn(crate::data::run(crate::data::DataOptions {
+                    addr,
+                    session: login.session.clone(),
+                    local: opts.local,
+                })))
+            }
+            None => {
+                warn!(announced, "cannot resolve the announced data address");
+                None
+            }
+        },
+        None => {
+            info!("server announced no data address; payload will require iroh");
+            None
+        }
+    };
     // ---- Frame pump ----
     let (mut sink, mut stream) = ws.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<Frame>();
@@ -133,14 +159,14 @@ pub async fn run_once(opts: &AgentOptions) -> Result<Option<String>> {
     crate::token_check::set_control(tx.clone());
     let sink_task = tokio::spawn(async move {
         while let Some(frame) = rx.recv().await {
-            let wire = match encode(&frame) {
-                Ok(w) => w,
+            let text = match encode(&frame) {
+                Ok(t) => t,
                 Err(e) => {
                     error!(?e, "frame encode failed");
                     continue;
                 }
             };
-            if sink.send(WsMessage::Binary(wire)).await.is_err() {
+            if sink.send(WsMessage::Text(text)).await.is_err() {
                 break;
             }
         }
@@ -185,7 +211,7 @@ pub async fn run_once(opts: &AgentOptions) -> Result<Option<String>> {
     // the endpoint learns routes (e.g. its home relay).
     let serve = match crate::p2p::build_endpoint(
         iroh::SecretKey::from_bytes(&opts.secret_key),
-        opts.relay.as_deref(),
+        relay.as_deref(),
         opts.no_portmap,
     )
     .await
@@ -223,15 +249,16 @@ pub async fn run_once(opts: &AgentOptions) -> Result<Option<String>> {
     // ---- Serve frames ----
     loop {
         match stream.next().await {
-            Some(Ok(WsMessage::Binary(data))) => {
-                let frame = match decode(&data) {
+            Some(Ok(WsMessage::Text(text))) => {
+                let frame = match decode(&text) {
                     Ok(f) => f,
+                    // Unknown message types must not kill the connection.
                     Err(e) => {
-                        debug!("bad frame from server: {e}");
+                        debug!("ignoring bad frame from server: {e}");
                         continue;
                     }
                 };
-                if !handle_frame(&tx, &opts.local, frame).await {
+                if !handle_frame(&tx, frame).await {
                     break;
                 }
             }
@@ -254,6 +281,9 @@ pub async fn run_once(opts: &AgentOptions) -> Result<Option<String>> {
 
     if let Some(serve) = serve {
         serve.abort();
+    }
+    if let Some(task) = data_task {
+        task.abort();
     }
     sink_task.abort();
     Ok(assigned_subdomain)
@@ -279,49 +309,18 @@ where
     S: StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
 {
     match tokio::time::timeout(Duration::from_secs(10), stream.next()).await {
-        Ok(Some(Ok(WsMessage::Binary(data)))) => match decode(&data)? {
+        Ok(Some(Ok(WsMessage::Text(text)))) => match decode(&text)? {
             Frame::TcpRegisterResp(r) => Ok(Some(r)),
             other => anyhow::bail!("expected TcpRegisterResp, got {other:?}"),
         },
-        Ok(Some(Ok(_))) => anyhow::bail!("expected TcpRegisterResp, got non-binary message"),
+        Ok(Some(Ok(_))) => anyhow::bail!("expected TcpRegisterResp, got a non-text message"),
         _ => Ok(None),
     }
 }
 
 /// Handle one frame from the server. Returns false to end the connection.
-async fn handle_frame(
-    tx: &mpsc::UnboundedSender<Frame>,
-    local: &SocketAddr,
-    frame: Frame,
-) -> bool {
+async fn handle_frame(tx: &mpsc::UnboundedSender<Frame>, frame: Frame) -> bool {
     match frame {
-        Frame::Stream(StreamPacket::Init { stream_id }) => {
-            // Register the outbound placeholder *synchronously*, then hand the
-            // receiver to the spawned pump task. This guarantees the first
-            // Data frame (which may follow Init back-to-back) never arrives
-            // before its channel exists.
-            let (ltx, lrx) = mpsc::unbounded_channel::<Vec<u8>>();
-            local::streams().insert(stream_id, ltx);
-            let tx = tx.clone();
-            let local = *local;
-            tokio::spawn(async move {
-                local::handle_stream(stream_id, tx, local, lrx).await;
-            });
-            true
-        }
-        Frame::Stream(StreamPacket::Data { stream_id, data }) => {
-            if let Some(t) = local::streams().get(&stream_id) {
-                let _ = t.send(data);
-            } else {
-                debug!(stream_id, "data for unknown local stream, ignoring");
-            }
-            true
-        }
-        Frame::Stream(StreamPacket::End { stream_id }) => {
-            local::streams().remove(&stream_id);
-            true
-        }
-        Frame::Stream(StreamPacket::Refused { .. }) => true, // server informing us
         Frame::Ping => {
             let _ = tx.send(Frame::Pong);
             true

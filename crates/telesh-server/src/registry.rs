@@ -11,6 +11,8 @@ use tracing::debug;
 
 use telesh_protocol::{EndpointAddr, Frame};
 
+use crate::data::DataHandle;
+
 /// A live agent connection. `tx` is the sink task channel: every frame meant
 /// for this agent goes through it (stream inits, incoming data, pings...).
 #[derive(Debug, Clone)]
@@ -21,12 +23,23 @@ pub struct AgentConn {
     pub connected_at: Instant,
 }
 
+/// A live data connection: the handle used to open streams, plus the id of the
+/// connection that owns it. A newer connection replaces an older one, and an
+/// older one's cleanup never removes a newer registration.
+#[derive(Debug, Clone)]
+pub struct DataEntry {
+    pub run_id: u64,
+    pub handle: DataHandle,
+}
+
 #[derive(Default)]
 pub struct Registry {
     by_host: DashMap<String, AgentConn>,
     by_agent: DashMap<String, AgentConn>,
     /// iroh data-plane address per agent, announced via `Frame::IrohReady`.
     iroh: DashMap<String, EndpointAddr>,
+    /// Agent-initiated data connections, keyed by `agent_id`.
+    data: DashMap<String, DataEntry>,
 }
 
 impl Registry {
@@ -86,8 +99,59 @@ impl Registry {
         self.iroh.get(agent_id).map(|e| e.clone())
     }
 
+    /// Register a data connection (rejecting an older run replacing a newer).
+    pub fn set_data(&self, agent_id: &str, run_id: u64, handle: DataHandle) {
+        match self.data.entry(agent_id.to_string()) {
+            dashmap::mapref::entry::Entry::Occupied(mut slot) => {
+                if slot.get().run_id < run_id {
+                    slot.insert(DataEntry { run_id, handle });
+                }
+            }
+            dashmap::mapref::entry::Entry::Vacant(slot) => {
+                slot.insert(DataEntry { run_id, handle });
+            }
+        }
+    }
+
+    /// The handle for opening streams on this agent's data connection.
+    pub fn data_handle(&self, agent_id: &str) -> Option<DataHandle> {
+        self.data.get(agent_id).map(|e| e.handle.clone())
+    }
+
+    /// The `run_id` of the live data connection, if any.
+    pub fn data_run(&self, agent_id: &str) -> Option<u64> {
+        self.data.get(agent_id).map(|e| e.run_id)
+    }
+
+    /// Drop a data connection registration (only if `run_id` still owns it).
+    pub fn remove_data(&self, agent_id: &str, run_id: u64) {
+        if let dashmap::mapref::entry::Entry::Occupied(slot) =
+            self.data.entry(agent_id.to_string())
+        {
+            if slot.get().run_id == run_id {
+                slot.remove();
+            }
+        }
+    }
+
+    /// Drop whichever agent registered this `run_id` (used by the driver task,
+    /// which does not know the agent id).
+    pub fn remove_data_run(&self, run_id: u64) {
+        let key = self
+            .data
+            .iter()
+            .find(|e| e.value().run_id == run_id)
+            .map(|e| e.key().clone());
+        if let Some(key) = key {
+            self.data.remove(&key);
+        }
+    }
+
     pub fn remove(&self, agent_id: &str) {
         self.iroh.remove(agent_id);
+        if let Some((_, entry)) = self.data.remove(agent_id) {
+            entry.handle.shutdown();
+        }
         if let Some((_, client)) = self.by_agent.remove(agent_id) {
             self.by_host.remove(&client.sub_domain);
             crate::metrics::dec_agents();

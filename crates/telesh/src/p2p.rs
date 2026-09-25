@@ -33,8 +33,8 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tracing::{debug, info, warn};
 
 use telesh_protocol::{
-    decode, encode, Frame, P2PAddrResp, P2PAnnounce, P2PAnnounceResp, P2PLookup, ServerHello,
-    TcpMapped, TrafficReport, LookupHello, PROTOCOL_VERSION, STREAM_ACK_ERR, STREAM_ACK_OK,
+    decode, encode, Frame, LookupHello, P2PAddrResp, P2PAnnounce, P2PAnnounceResp, P2PLookup,
+    ServerHello, TcpMapped, TrafficReport, STREAM_ACK_ERR, STREAM_ACK_OK,
 };
 
 /// ALPN identifying the telesh P2P data plane.
@@ -99,8 +99,6 @@ pub struct ExposeOptions {
     /// One entry per exposed port; all share the same endpoint/identity.
     pub services: Vec<P2PExpose>,
     pub secret: Option<String>,
-    /// Custom iroh relay URL; `None` uses the public n0 relays.
-    pub relay: Option<String>,
     /// Disable UPnP/PCP/NAT-PMP gateway probing.
     pub no_portmap: bool,
     pub secret_key: [u8; 32],
@@ -128,7 +126,6 @@ pub struct ConnectOptions {
     /// Address the local mirror listens on.
     pub local: SocketAddr,
     pub secret: Option<String>,
-    pub relay: Option<String>,
     pub no_portmap: bool,
     /// How long to hold an accepted local connection while the P2P link
     /// recovers, retrying the stream setup (never after payload flows).
@@ -152,7 +149,7 @@ pub async fn run_expose(opts: &ExposeOptions) -> Result<()> {
 
     // ---- Login + tunnel setup ----
     // P2P is not Host-routed, so no subdomain is requested.
-    let (login, _server_hello) = crate::auth::login(
+    let (login, server_hello) = crate::auth::login(
         &mut ws,
         &opts.secret_key,
         opts.session.clone(),
@@ -162,6 +159,12 @@ pub async fn run_expose(opts: &ExposeOptions) -> Result<()> {
     )
     .await?;
     info!(account = %login.account, name = %login.display_name, "logged in");
+    // The relay is the server's choice, announced with the handshake; the
+    // agent holds no relay configuration of its own.
+    let relay = server_hello.relay_url().map(str::to_string);
+    if let Some(url) = &relay {
+        info!(relay = %url, "using server-announced iroh relay");
+    }
     let account = login.account.clone();
     if let Some(path) = &opts.persist_file {
         if let Err(e) = crate::state::save_session(path, &login.session, login.expires_at) {
@@ -172,7 +175,7 @@ pub async fn run_expose(opts: &ExposeOptions) -> Result<()> {
     // ---- iroh endpoint ----
     let endpoint = build_endpoint(
         SecretKey::from_bytes(&opts.secret_key),
-        opts.relay.as_deref(),
+        relay.as_deref(),
         opts.no_portmap,
     )
     .await?;
@@ -204,7 +207,7 @@ pub async fn run_expose(opts: &ExposeOptions) -> Result<()> {
     }
 
     for (name, local) in &announced {
-        ws.send(ws_bin(&Frame::P2PAnnounce(P2PAnnounce {
+        ws.send(ws_text(&Frame::P2PAnnounce(P2PAnnounce {
             name: name.clone(),
             addr: addr.clone(),
             local_port: local.port(),
@@ -216,7 +219,7 @@ pub async fn run_expose(opts: &ExposeOptions) -> Result<()> {
     let mut pending: HashSet<String> = announced.iter().map(|(n, _)| n.clone()).collect();
     while !pending.is_empty() {
         match tokio::time::timeout(Duration::from_secs(10), ws.next()).await {
-            Ok(Some(Ok(WsMessage::Binary(data)))) => match decode(&data)? {
+            Ok(Some(Ok(WsMessage::Text(text)))) => match decode(&text)? {
                 Frame::P2PAnnounceResp(P2PAnnounceResp::Ok { name }) => {
                     pending.remove(&name);
                 }
@@ -226,7 +229,7 @@ pub async fn run_expose(opts: &ExposeOptions) -> Result<()> {
                 Frame::P2PAnnounceResp(P2PAnnounceResp::InvalidName { name }) => {
                     bail!("invalid p2p service name {name:?}");
                 }
-                Frame::Ping => ws.send(ws_bin(&Frame::Pong)?).await?,
+                Frame::Ping => ws.send(ws_text(&Frame::Pong)?).await?,
                 _ => {}
             },
             Ok(Some(Ok(_))) => {}
@@ -257,7 +260,7 @@ pub async fn run_expose(opts: &ExposeOptions) -> Result<()> {
             match map_tcp_port(local.port(), TCP_MAP_WAIT).await {
                 Ok((public, client)) => {
                     info!(service = %name, public = %public, "tcp port mapped — reachable publicly without iroh");
-                    ws.send(ws_bin(&Frame::TcpMapped(TcpMapped {
+                    ws.send(ws_text(&Frame::TcpMapped(TcpMapped {
                         name: name.clone(),
                         addr: public,
                         local_port: local.port(),
@@ -280,8 +283,8 @@ pub async fn run_expose(opts: &ExposeOptions) -> Result<()> {
     let sink_task = tokio::spawn(async move {
         while let Some(frame) = out_rx.recv().await {
             match encode(&frame) {
-                Ok(wire) => {
-                    if sink.send(WsMessage::Binary(wire)).await.is_err() {
+                Ok(text) => {
+                    if sink.send(WsMessage::Text(text)).await.is_err() {
                         break;
                     }
                 }
@@ -312,7 +315,7 @@ pub async fn run_expose(opts: &ExposeOptions) -> Result<()> {
                 }
             }
             msg = stream.next() => match msg {
-                Some(Ok(WsMessage::Binary(data))) => match decode(&data) {
+                Some(Ok(WsMessage::Text(text))) => match decode(&text) {
                     Ok(Frame::Ping) => {
                         if out_tx.send(Frame::Pong).is_err() {
                             break Ok(());
@@ -343,25 +346,38 @@ pub async fn run_expose(opts: &ExposeOptions) -> Result<()> {
 /// reconnects with a new address needs no re-lookup. Returns when the control
 /// subscription ends; the caller resubscribes.
 pub async fn run_connect(opts: &ConnectOptions) -> Result<()> {
-    let endpoint = build_endpoint(
-        SecretKey::generate(),
-        opts.relay.as_deref(),
-        opts.no_portmap,
-    )
-    .await?;
-
     let (info_tx, info_rx) = watch::channel::<Option<ServiceInfo>>(None);
     let (conn_tx, conn_rx) = watch::channel::<Option<Connection>>(None);
 
     // Control subscription: keeps the WS open, pushes address updates, and
-    // refreshes the access token before it expires.
+    // refreshes the access token before it expires. The relay URL is announced
+    // by the server during this handshake, so it must complete before the iroh
+    // endpoint (which needs the relay) can be built.
+    let (relay_tx, relay_rx) = tokio::sync::oneshot::channel::<Option<String>>();
     let mut control = tokio::spawn(subscribe(
         opts.control_addr.clone(),
         opts.account.clone(),
         opts.name.clone(),
         opts.secret.clone(),
         info_tx,
+        relay_tx,
     ));
+    let relay = match tokio::time::timeout(Duration::from_secs(15), relay_rx).await {
+        Ok(Ok(relay)) => relay,
+        Ok(Err(_)) => {
+            control.abort();
+            return Err(anyhow!("control subscription ended before the server handshake"));
+        }
+        Err(_) => {
+            control.abort();
+            return Err(anyhow!("timed out waiting for the control server handshake"));
+        }
+    };
+    if let Some(url) = &relay {
+        info!(relay = %url, "using server-announced iroh relay");
+    }
+    let endpoint = build_endpoint(SecretKey::generate(), relay.as_deref(), opts.no_portmap).await?;
+
     // Supervisor: maintains one live connection to the latest address.
     let supervisor = tokio::spawn(supervisor(endpoint, info_rx.clone(), conn_tx));
 
@@ -486,6 +502,7 @@ async fn subscribe(
     name: String,
     secret: Option<String>,
     info_tx: watch::Sender<Option<ServiceInfo>>,
+    relay_tx: tokio::sync::oneshot::Sender<Option<String>>,
 ) -> Result<()> {
     let url = format!("ws://{control_addr}/tunnel");
     let (mut ws, _) = tokio_tungstenite::connect_async(&url)
@@ -494,24 +511,28 @@ async fn subscribe(
 
     // A lookup-only peer registers no tunnel on the server.
     let hello = LookupHello {
-        protocol_version: PROTOCOL_VERSION,
         agent_id: format!("peer-{}", random_id(12)),
         auth_key: secret,
     };
-    ws.send(ws_bin(&Frame::Lookup(hello))?).await?;
-    loop {
+    ws.send(ws_text(&Frame::Lookup(hello))?).await?;
+    let relay = loop {
         match ws.next().await {
-            Some(Ok(WsMessage::Binary(data))) => match decode(&data)? {
-                Frame::ServerHello(ServerHello::Success { .. }) => break,
+            Some(Ok(WsMessage::Text(text))) => match decode(&text)? {
+                Frame::ServerHello(hello @ ServerHello::Success { .. }) => {
+                    break hello.relay_url().map(str::to_string)
+                }
                 Frame::ServerHello(other) => bail!("control server rejected peer: {other:?}"),
-                Frame::Ping => ws.send(ws_bin(&Frame::Pong)?).await?,
+                Frame::Ping => ws.send(ws_text(&Frame::Pong)?).await?,
                 _ => {}
             },
             Some(Ok(_)) => {}
             Some(Err(e)) => bail!("control connection error during handshake: {e}"),
             None => bail!("control connection closed during handshake"),
         }
-    }
+    };
+    // Hand the announced relay to `run_connect` before entering the long-lived
+    // push loop.
+    let _ = relay_tx.send(relay);
 
     // Split so we can read pushes and periodically re-request a fresh token.
     let (mut sink, mut stream) = ws.split();
@@ -524,7 +545,7 @@ async fn subscribe(
         }
     });
     out_tx
-        .send(ws_bin(&Frame::P2PLookup(P2PLookup {
+        .send(ws_text(&Frame::P2PLookup(P2PLookup {
             account: account.clone(),
             name: name.clone(),
         }))?)
@@ -543,12 +564,12 @@ async fn subscribe(
                     account: account.clone(),
                     name: name.clone(),
                 });
-                if out_tx.send(ws_bin(&lookup)?).is_err() {
+                if out_tx.send(ws_text(&lookup)?).is_err() {
                     break Err(anyhow!("control sink closed"));
                 }
             }
             msg = stream.next() => match msg {
-                Some(Ok(WsMessage::Binary(data))) => match decode(&data)? {
+                Some(Ok(WsMessage::Text(text))) => match decode(&text)? {
                     Frame::P2PAddr(P2PAddrResp::Found {
                         owner_name,
                         addr,
@@ -562,7 +583,7 @@ async fn subscribe(
                         warn!(service = %name, "p2p service not registered yet; waiting for it");
                     }
                     Frame::Ping => {
-                        let sent = out_tx.send(ws_bin(&Frame::Pong)?).is_ok();
+                        let sent = out_tx.send(ws_text(&Frame::Pong)?).is_ok();
                         if !sent {
                             break Err(anyhow!("control sink closed"));
                         }
@@ -981,8 +1002,11 @@ async fn read_field(recv: &mut RecvStream) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-fn ws_bin(frame: &Frame) -> Result<WsMessage> {
-    Ok(WsMessage::Binary(encode(frame)?))
+
+
+/// 一条控制消息 → 一个 JSON text 帧。
+fn ws_text(frame: &Frame) -> Result<WsMessage> {
+    Ok(WsMessage::Text(encode(frame)?))
 }
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {

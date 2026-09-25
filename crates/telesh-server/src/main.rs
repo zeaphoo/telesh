@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use telesh_server::{config, control, dashboard, gateway, ingress, relay_config, state, Config};
+use telesh_server::{config, control, dashboard, data, gateway, ingress, relay_config, state, Config};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -16,21 +16,43 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let cfg = Config::parse();
+    let mut cfg = Config::parse();
+
+    // Relay configuration is loaded once: it decides both the embedded relay we
+    // run (if any) and the URL announced to clients after login. A broken file
+    // disables the embedded relay rather than silently serving plain HTTP.
+    let relay_file = match relay_config::load() {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::error!("failed to load relay config: {e:#}");
+            if cfg.relay_serve.take().is_some() {
+                tracing::error!("not starting the embedded relay without its config");
+            }
+            relay_config::RelayConfigFile::default()
+        }
+    };
     config::init(cfg.clone());
 
     state::init().await?;
 
     // Optional embedded iroh relay, for a fully self-hosted deployment. Kept
     // alive for the process lifetime; dropping it shuts the relay down.
-    let _embedded_relay = start_embedded_relay(&cfg).await;
+    let _embedded_relay = match cfg.relay_serve {
+        Some(addr) => start_embedded_relay(addr, &relay_file).await,
+        None => None,
+    };
+
+    // The relay clients are told to use; also the relay the gateway dials
+    // through, so both ends agree on the same relay URL.
+    let relay_url = relay_config::advertised_url(&cfg, &relay_file);
+    state::set_relay_url(relay_url.clone());
 
     // Direct data plane: bind the iroh endpoint the ingress uses to reach
     // agents. A failure here is non-fatal — ingress falls back to the relay.
     if env_flag("TELESH_NO_IROH") {
         tracing::info!("iroh gateway disabled (TELESH_NO_IROH); ingress will use the relay only");
     } else {
-        let iroh_relay = std::env::var("TELESH_RELAY").unwrap_or_default();
+        let iroh_relay = relay_url.unwrap_or_default();
         match gateway::build_endpoint(&iroh_relay).await {
             Ok(endpoint) => state::set_server_endpoint(endpoint),
             Err(e) => {
@@ -38,6 +60,13 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     }
+
+    // Data plane: agents dial this and speak yamux over TCP. The bind address is
+    // announced verbatim; an agent that sees an unspecified host (`0.0.0.0`/`::`)
+    // substitutes the host it used for the control connection.
+    let data_addr = cfg.data_addr;
+    state::set_data_addr(Some(data_addr.to_string()));
+    let data_listener = tokio::net::TcpListener::bind(data_addr).await?;
 
     let ctrl_addr = cfg.control_addr;
     let dash_addr = cfg.dashboard_addr;
@@ -60,24 +89,25 @@ async fn main() -> anyhow::Result<()> {
         Ok::<_, anyhow::Error>(())
     };
 
-    tokio::try_join!(ctrl, ingress::run_ingress(), dash)?;
+    tokio::try_join!(
+        ctrl,
+        ingress::run_ingress(),
+        dash,
+        data::run(data_listener)
+    )?;
     Ok(())
 }
 
-/// Start the embedded iroh relay if `--relay-serve` was given.
+/// Start the embedded iroh relay on `http_addr`.
 ///
-/// Plain HTTP by default. With `--relay-tls-cert`/`--relay-tls-key` it serves
-/// HTTPS (on `--relay-https-addr`) and opens the QUIC address-discovery port,
-/// which improves hole punching for clients behind the relay.
-async fn start_embedded_relay(cfg: &Config) -> Option<iroh_relay::server::Server> {
-    let http_addr = cfg.relay_serve?;
-    let file = match relay_config::load() {
-        Ok(f) => f,
-        Err(e) => {
-            tracing::error!("failed to load relay config: {e:#}");
-            return None;
-        }
-    };
+/// Plain HTTP by default. With TLS/ACME in the relay config file it also
+/// serves HTTPS and opens the QUIC address-discovery port, which improves hole
+/// punching for clients behind the relay. The public URL announced to agents is
+/// resolved separately by [`relay_config::advertised_url`].
+async fn start_embedded_relay(
+    http_addr: SocketAddr,
+    file: &relay_config::RelayConfigFile,
+) -> Option<iroh_relay::server::Server> {
     let mut server_config = iroh_relay::server::ServerConfig::default();
     let mut relay = iroh_relay::server::RelayConfig::new(http_addr);
 
@@ -86,7 +116,7 @@ async fn start_embedded_relay(cfg: &Config) -> Option<iroh_relay::server::Server
             tracing::error!("relay config: `https_addr` is required with `acme`");
             return None;
         };
-        match build_acme_cert_config(&file) {
+        match build_acme_cert_config(file) {
             Ok(cert) => {
                 let quic = file.quic_addr_or_default();
                 relay.tls = Some(iroh_relay::server::TlsConfig::new(https_addr, cert));

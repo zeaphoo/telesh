@@ -4,7 +4,6 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use axum::{
-    body::Bytes,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         ConnectInfo,
@@ -17,13 +16,13 @@ use tracing::{debug, error, info, warn};
 
 use telesh_protocol::{
     self as proto, decode, encode, login_message, AuthChallenge, AuthError, AuthMethod, AuthOk,
-    ClientHello, Frame, P2PAddrResp, P2PAnnounceResp, PublicKey, ServerHello, Signature,
-    StreamPacket, TcpRegisterResp, TokenCheckResp, LookupHello, PROTOCOL_VERSION,
+    ClientHello, Frame, LookupHello, P2PAddrResp, P2PAnnounceResp, PublicKey, ServerHello,
+    Signature, TcpRegisterResp, TokenCheckResp,
 };
 
 use crate::config::config;
 use crate::registry::AgentConn;
-use crate::state::{active_streams, registry};
+use crate::state::registry;
 
 const PING_INTERVAL: Duration = Duration::from_secs(30);
 const PING_TIMEOUT: Duration = Duration::from_secs(90);
@@ -56,17 +55,6 @@ async fn handle_connection(addr: SocketAddr, mut socket: WebSocket) {
     let reg = registry();
 
     // ---- Login: keypair challenge-response, or a session fast path ----
-    if hello.protocol_version != PROTOCOL_VERSION {
-        let _ = send(
-            &mut socket,
-            &Frame::ServerHello(ServerHello::Error(format!(
-                "unsupported protocol version {}, expected {}",
-                hello.protocol_version, PROTOCOL_VERSION
-            ))),
-        )
-        .await;
-        return;
-    }
     let account = match login(&mut socket, &hello).await {
         Some(a) => a,
         None => return,
@@ -96,6 +84,8 @@ async fn handle_connection(addr: SocketAddr, mut socket: WebSocket) {
             sub_domain: sub_domain.clone(),
             hostname,
             agent_id: agent_id.clone(),
+            relay_url: crate::state::relay_url(),
+            data_addr: crate::state::data_addr(),
         }),
     )
     .await
@@ -113,14 +103,14 @@ async fn handle_connection(addr: SocketAddr, mut socket: WebSocket) {
     let reg_clone = reg;
     tokio::spawn(async move {
         while let Some(frame) = rx.recv().await {
-            let wire = match encode(&frame) {
-                Ok(w) => w,
+            let msg = match wire_message(&frame) {
+                Ok(m) => m,
                 Err(e) => {
                     error!(?e, "frame encode failed");
                     continue;
                 }
             };
-            if sink.send(Message::Binary(Bytes::from(wire))).await.is_err() {
+            if sink.send(msg).await.is_err() {
                 break;
             }
         }
@@ -149,16 +139,20 @@ async fn handle_connection(addr: SocketAddr, mut socket: WebSocket) {
                 warn!(agent_id = %agent_id, "control connection idle, closing");
                 break;
             }
-            Ok(Some(Ok(Message::Binary(data)))) => {
-                if let Err(e) = dispatch(&tx, &agent_id, &data).await {
-                    debug!("frame dispatch error: {e}");
+            Ok(Some(Ok(msg @ Message::Text(_)))) => match parse_message(msg) {
+                Ok(frame) => {
+                    if let Err(e) = dispatch(&tx, &agent_id, frame).await {
+                        debug!("frame dispatch error: {e}");
+                    }
                 }
-            }
+                // Unknown message types must not kill the connection.
+                Err(e) => debug!(agent_id = %agent_id, "ignoring bad frame: {e}"),
+            },
             Ok(Some(Ok(Message::Close(_)))) => {
                 debug!(agent_id = %agent_id, "agent closed connection");
                 break;
             }
-            Ok(Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Text(_)))) => {}
+            Ok(Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Binary(_)))) => {}
             Ok(Some(Err(e))) => {
                 debug!(agent_id = %agent_id, "websocket error: {e}");
                 break;
@@ -182,14 +176,18 @@ enum FirstFrame {
     Lookup(LookupHello),
 }
 
-/// Read the first message; must be a `Hello` (agent) or `Peer` (lookup-only).
+/// Read the first message; must be a JSON `hello` (agent) or `lookup` (lookup-only).
 async fn recv_first(socket: &mut WebSocket) -> Option<FirstFrame> {
     match tokio::time::timeout(Duration::from_secs(10), socket.next()).await {
-        Ok(Some(Ok(Message::Binary(data)))) => match decode(&data) {
+        Ok(Some(Ok(Message::Text(text)))) => match decode(&text) {
             Ok(Frame::Hello(h)) => Some(FirstFrame::Agent(h)),
             Ok(Frame::Lookup(v)) => Some(FirstFrame::Lookup(v)),
-            other => {
-                warn!("expected Hello/Peer, got {:?}", other.map(|_| "other frame"));
+            Ok(other) => {
+                warn!("expected hello/lookup as first frame, got {other:?}");
+                None
+            }
+            Err(e) => {
+                warn!("first frame is not a valid control message: {e}");
                 None
             }
         },
@@ -357,7 +355,7 @@ async fn issue_session(
 async fn read_auth_response(socket: &mut WebSocket) -> Option<[u8; 64]> {
     loop {
         match tokio::time::timeout(Duration::from_secs(10), socket.next()).await {
-            Ok(Some(Ok(Message::Binary(data)))) => match decode(&data) {
+            Ok(Some(Ok(msg @ Message::Text(_)))) => match parse_message(msg) {
                 Ok(Frame::AuthResponse(r)) => {
                     return match <[u8; 64]>::try_from(r.signature.as_slice()) {
                         Ok(sig) => Some(sig),
@@ -402,17 +400,6 @@ fn now_secs() -> u64 {
 /// Answer a lookup-only peer. Peers never register a tunnel, so this
 /// connection only ever serves `P2PLookup` (plus keepalives) until it closes.
 async fn handle_lookup(addr: SocketAddr, mut socket: WebSocket, hello: LookupHello) {
-    if hello.protocol_version != PROTOCOL_VERSION {
-        let _ = send(
-            &mut socket,
-            &Frame::ServerHello(ServerHello::Error(format!(
-                "unsupported protocol version {}, expected {}",
-                hello.protocol_version, PROTOCOL_VERSION
-            ))),
-        )
-        .await;
-        return;
-    }
     if !lookup_auth_ok(hello.auth_key.as_deref()) {
         warn!(peer = %hello.agent_id, "peer auth failed");
         let _ = send(&mut socket, &Frame::ServerHello(ServerHello::AuthFailed)).await;
@@ -424,6 +411,8 @@ async fn handle_lookup(addr: SocketAddr, mut socket: WebSocket, hello: LookupHel
             sub_domain: String::new(),
             hostname: String::new(),
             agent_id: hello.agent_id.clone(),
+            relay_url: crate::state::relay_url(),
+            data_addr: crate::state::data_addr(),
         }),
     )
     .await
@@ -438,14 +427,14 @@ async fn handle_lookup(addr: SocketAddr, mut socket: WebSocket, hello: LookupHel
     let peer_id = hello.agent_id.clone();
     tokio::spawn(async move {
         while let Some(frame) = rx.recv().await {
-            let wire = match encode(&frame) {
-                Ok(w) => w,
+            let msg = match wire_message(&frame) {
+                Ok(m) => m,
                 Err(e) => {
                     error!(?e, "frame encode failed");
                     continue;
                 }
             };
-            if sink.send(Message::Binary(Bytes::from(wire))).await.is_err() {
+            if sink.send(msg).await.is_err() {
                 break;
             }
         }
@@ -455,7 +444,7 @@ async fn handle_lookup(addr: SocketAddr, mut socket: WebSocket, hello: LookupHel
     loop {
         match tokio::time::timeout(PING_TIMEOUT, stream.next()).await {
             Err(_) => break,
-            Ok(Some(Ok(Message::Binary(data)))) => match decode(&data) {
+            Ok(Some(Ok(msg @ Message::Text(_)))) => match parse_message(msg) {
                 Ok(Frame::P2PLookup(lookup)) => {
                     // Send the current address (may be NotFound) and subscribe
                     // for updates, so a later re-announce needs no re-lookup.
@@ -537,30 +526,9 @@ fn public_hostname(sub_domain: &str) -> String {
 async fn dispatch(
     tx: &UnboundedSender<Frame>,
     agent_id: &str,
-    data: &[u8],
+    frame: Frame,
 ) -> anyhow::Result<()> {
-    let frame = decode(data)?;
     match frame {
-        Frame::Stream(packet) => match packet {
-            StreamPacket::Data { stream_id, data } => {
-                if let Some(s) = active_streams().get(&stream_id) {
-                    s.send(StreamPacket::Data { stream_id, data })?;
-                } else {
-                    debug!(stream_id, "data for unknown/closed stream");
-                }
-            }
-            StreamPacket::End { stream_id } => {
-                if let Some(s) = active_streams().get(&stream_id) {
-                    s.send(StreamPacket::End { stream_id })?;
-                }
-            }
-            StreamPacket::Refused { stream_id } => {
-                if let Some(s) = active_streams().get(&stream_id) {
-                    s.send(StreamPacket::Refused { stream_id })?;
-                }
-            }
-            StreamPacket::Init { .. } => debug!("agent sent unexpected Init, ignoring"),
-        },
         // Raw-TCP tunnel registration: allocate a public port and reply.
         Frame::TcpRegister(req) => {
             let client = AgentConn {
@@ -677,8 +645,20 @@ async fn dispatch(
     Ok(())
 }
 
+/// 一条线上消息 → 一个 WebSocket text 帧(控制面全是 JSON)。
+fn wire_message(frame: &Frame) -> anyhow::Result<Message> {
+    Ok(Message::Text(encode(frame)?.into()))
+}
+
+/// WebSocket 消息 → 线上消息。控制面只用 text 帧。
+fn parse_message(msg: Message) -> anyhow::Result<Frame> {
+    match msg {
+        Message::Text(text) => Ok(decode(&text)?),
+        other => anyhow::bail!("unexpected websocket message: {other:?}"),
+    }
+}
+
 async fn send(socket: &mut WebSocket, frame: &Frame) -> anyhow::Result<()> {
-    let wire = encode(frame)?;
-    socket.send(Message::Binary(Bytes::from(wire))).await?;
+    socket.send(wire_message(frame)?).await?;
     Ok(())
 }

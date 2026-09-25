@@ -1,80 +1,74 @@
-//! Length-prefixed framing for [`Frame`] messages.
+//! 控制面编解码:JSON 文本,信封 `{"type":"…","data":{…}}`。
 //!
-//! Wire format: `[u32 big-endian body length][bincode body]`. A single
-//! WebSocket binary message carries exactly one frame.
+//! WebSocket 自带消息边界,所以**没有**长度前缀。见 `docs/design-control.md` §2。
 
-use crate::message::{Frame, MAX_FRAME_BODY};
+use crate::message::{Frame, MAX_MESSAGE_BYTES};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum CodecError {
-    #[error("frame body length {0} exceeds maximum {MAX_FRAME_BODY}")]
-    BodyTooLarge(usize),
-    #[error("message too short to contain a length prefix")]
-    Truncated,
-    #[error("frame body length {0} does not match message size {1}")]
-    LengthMismatch(usize, usize),
-    #[error("bincode: {0}")]
-    Bincode(#[from] bincode::Error),
+    #[error("json: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("message of {0} bytes exceeds the {MAX_MESSAGE_BYTES} byte limit")]
+    TooLarge(usize),
 }
 
-/// Serialize a frame into a length-prefixed wire message.
-pub fn encode(frame: &Frame) -> Result<Vec<u8>, CodecError> {
-    let body = bincode::serialize(frame)?;
-    if body.len() > MAX_FRAME_BODY {
-        return Err(CodecError::BodyTooLarge(body.len()));
+/// 把一条控制消息编码成 JSON 文本。
+pub fn encode(frame: &Frame) -> Result<String, CodecError> {
+    let text = serde_json::to_string(frame)?;
+    if text.len() > MAX_MESSAGE_BYTES {
+        return Err(CodecError::TooLarge(text.len()));
     }
-    let mut out = Vec::with_capacity(4 + body.len());
-    out.extend_from_slice(&(body.len() as u32).to_be_bytes());
-    out.extend_from_slice(&body);
-    Ok(out)
+    Ok(text)
 }
 
-/// Decode exactly one frame from a buffer that should contain a single
-/// complete message (the common case: one WebSocket binary message).
-pub fn decode(msg: &[u8]) -> Result<Frame, CodecError> {
-    if msg.len() < 4 {
-        return Err(CodecError::Truncated);
+/// 解码一条 JSON 控制消息。
+///
+/// 未知 `type` 会返回 `Err`;调用方应当**记录并忽略**它,而不是断开连接。
+pub fn decode(text: &str) -> Result<Frame, CodecError> {
+    if text.len() > MAX_MESSAGE_BYTES {
+        return Err(CodecError::TooLarge(text.len()));
     }
-    let len = u32::from_be_bytes([msg[0], msg[1], msg[2], msg[3]]) as usize;
-    if len > MAX_FRAME_BODY {
-        return Err(CodecError::BodyTooLarge(len));
-    }
-    if len != msg.len() - 4 {
-        return Err(CodecError::LengthMismatch(len, msg.len() - 4));
-    }
-    Ok(bincode::deserialize(&msg[4..])?)
+    Ok(serde_json::from_str(text)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::message::{
-        AuthChallenge, AuthError, AuthMethod, AuthOk, AuthResponse, ClientHello, ClientKind,
-        P2PAddrResp, P2PAnnounce, P2PAnnounceResp, P2PLookup, ServerHello, StreamPacket, TcpMapped,
-        TokenCheck, TokenCheckResp, TrafficReport, LookupHello,
+        AuthMethod, AuthOk, ClientHello, ClientKind, P2PAnnounce, ServerHello,
     };
+    use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
+
+    fn endpoint_addr() -> EndpointAddr {
+        let key = SecretKey::generate();
+        let mut addr = EndpointAddr::new(key.public());
+        addr.addrs
+            .insert(TransportAddr::Ip("192.168.1.5:1234".parse().unwrap()));
+        addr.addrs
+            .insert(TransportAddr::Relay("https://relay.example.com".parse().unwrap()));
+        addr
+    }
 
     #[test]
-    fn roundtrip_small_frames() {
-        let frames = [
+    fn envelope_shape() {
+        assert_eq!(encode(&Frame::Ping).unwrap(), r#"{"type":"ping"}"#);
+        assert_eq!(encode(&Frame::Pong).unwrap(), r#"{"type":"pong"}"#);
+    }
+
+    #[test]
+    fn control_roundtrip() {
+        let frames = vec![
+            Frame::Ping,
+            Frame::Pong,
             Frame::Hello(ClientHello {
-                protocol_version: 2,
                 client_kind: ClientKind::Agent,
                 method: AuthMethod::Keypair,
                 public_key: Some([7u8; 32]),
-                session: None,
+                session: Some(vec![1, 2, 3, 4]),
                 enrollment: Some("enroll".into()),
                 sub_domain: Some("web".into()),
                 display_name: Some("Calm Otter".into()),
-            }),
-            Frame::AuthChallenge(AuthChallenge {
-                nonce: [1u8; 32],
-                server_id: [2u8; 32],
-                ts: 1234,
-            }),
-            Frame::AuthResponse(AuthResponse {
-                signature: vec![3u8; 64],
             }),
             Frame::AuthOk(AuthOk {
                 account: "000012345".into(),
@@ -82,115 +76,42 @@ mod tests {
                 expires_at: 9999,
                 display_name: "Calm Otter".into(),
             }),
-            Frame::AuthError(AuthError::BadSignature),
-            Frame::TokenCheck(TokenCheck {
-                id: 7,
-                account: "000012345".into(),
-                name: "svc".into(),
-                token: vec![5, 5, 5],
-            }),
-            Frame::TokenCheckResp(TokenCheckResp {
-                id: 7,
-                ok: true,
-                expires_at: 1234,
-            }),
             Frame::ServerHello(ServerHello::Success {
                 sub_domain: "web".into(),
                 hostname: "web.example.com".into(),
                 agent_id: "000012345".into(),
+                relay_url: Some("https://relay.example.com/".into()),
+                data_addr: Some("203.0.113.7:9008".into()),
             }),
-            Frame::stream(StreamPacket::Init { stream_id: 42 }),
-            Frame::stream(StreamPacket::Data {
-                stream_id: 42,
-                data: vec![0xde, 0xad, 0xbe, 0xef],
-            }),
-            Frame::Ping,
-            Frame::Pong,
-        ];
-        for f in frames {
-            let wire = encode(&f).unwrap();
-            let decoded = decode(&wire).unwrap();
-            assert_eq!(
-                format!("{:?}", decoded),
-                format!("{:?}", f),
-                "frame mismatch"
-            );
-        }
-    }
-
-    #[test]
-    fn roundtrip_p2p_frames() {
-        let id = iroh_base::SecretKey::generate().public();
-        let addr = iroh_base::EndpointAddr::new(id);
-        let frames = [
+            Frame::ServerHello(ServerHello::SubDomainInUse),
+            Frame::IrohReady(endpoint_addr()),
             Frame::P2PAnnounce(P2PAnnounce {
                 name: "svc".into(),
-                addr: addr.clone(),
+                addr: endpoint_addr(),
                 local_port: 8000,
-            }),
-            Frame::P2PLookup(P2PLookup {
-                account: "000012345".into(),
-                name: "svc".into(),
-            }),
-            Frame::P2PAddr(P2PAddrResp::Found {
-                account: "000012345".into(),
-                name: "svc".into(),
-                owner_name: "Calm Otter".into(),
-                addr: addr.clone(),
-                token: Some(vec![1, 2, 3]),
-            }),
-            Frame::P2PAddr(P2PAddrResp::NotFound),
-            Frame::Lookup(LookupHello {
-                protocol_version: 1,
-                auth_key: Some("secret".into()),
-                agent_id: "peer-1".into(),
-            }),
-            Frame::IrohReady(addr.clone()),
-            Frame::Traffic(TrafficReport {
-                name: "svc".into(),
-                up: 1024,
-                down: 2048,
-            }),
-            Frame::TcpMapped(TcpMapped {
-                name: "svc".into(),
-                addr: "203.0.113.7:22000".parse().unwrap(),
-                local_port: 22,
-            }),
-            Frame::P2PAnnounceResp(P2PAnnounceResp::Ok {
-                name: "svc".into(),
-            }),
-            Frame::P2PAnnounceResp(P2PAnnounceResp::NameTaken {
-                name: "svc".into(),
-            }),
-            Frame::P2PAnnounceResp(P2PAnnounceResp::InvalidName {
-                name: "BAD".into(),
             }),
         ];
         for f in frames {
-            let wire = encode(&f).unwrap();
-            let decoded = decode(&wire).unwrap();
-            assert_eq!(
-                format!("{:?}", decoded),
-                format!("{:?}", f),
-                "frame mismatch"
-            );
+            let text = encode(&f).unwrap();
+            let back = decode(&text).unwrap();
+            assert_eq!(format!("{back:?}"), format!("{f:?}"), "roundtrip: {text}");
         }
     }
 
     #[test]
-    fn rejects_oversized_body() {
-        let mut buf = vec![0u8; 4];
-        buf[0] = 0x02; // 32MB > MAX_FRAME_BODY
-        assert!(matches!(decode(&buf), Err(CodecError::BodyTooLarge(_))));
+    fn endpoint_id_is_hex_and_addrs_carry_a_kind_prefix() {
+        let addr = endpoint_addr();
+        let text = encode(&Frame::IrohReady(addr.clone())).unwrap();
+        assert!(text.contains(&format!("\"id\":\"{}\"", addr.id)), "{text}");
+        assert!(text.contains("\"ip:192.168.1.5:1234\""), "{text}");
+        assert!(text.contains("\"relay:https://relay.example.com/\""), "{text}");
+
+        let back = decode(&text).unwrap();
+        assert_eq!(format!("{back:?}"), format!("{:?}", Frame::IrohReady(addr)));
     }
 
     #[test]
-    fn rejects_length_mismatch() {
-        let mut buf = vec![0u8; 8];
-        buf[0] = 0x00;
-        buf[1] = 0x00;
-        buf[2] = 0x00;
-        buf[3] = 0x10; // claims 16 bytes but only 4 present
-        assert!(matches!(decode(&buf), Err(CodecError::LengthMismatch(16, 4))));
+    fn unknown_type_is_an_error_the_caller_ignores() {
+        assert!(decode(r#"{"type":"not_a_message"}"#).is_err());
     }
 }

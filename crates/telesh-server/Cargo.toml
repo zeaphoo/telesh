@@ -18,6 +18,10 @@ sha2 = { workspace = true }
 toml = "0.8"
 # Direct data plane: the edge dials agents over iroh for HTTP/TCP ingress.
 iroh = { workspace = true }
+# Agent-initiated data plane: yamux over TCP + length-prefixed CBOR signalling.
+yamux = { workspace = true }
+tokio-util = { workspace = true }
+bytes = { workspace = true }
 # Optional embedded relay (`--relay-serve`) for self-hosted deployments.
 iroh-relay = { version = "1.2", features = ["server"] }
 # TLS material loading for the embedded relay (`--relay-tls-cert`/`--relay-tls-key`).

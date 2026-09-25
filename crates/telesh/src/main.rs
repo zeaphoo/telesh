@@ -10,6 +10,7 @@
 
 mod auth;
 mod control;
+mod data;
 mod inspect;
 mod local;
 mod p2p;
@@ -29,11 +30,6 @@ use control::{run_once, AgentOptions};
 
 /// Seconds an accepted local connection is held while the P2P link recovers.
 const RETRY_WAIT_SECS: u64 = 30;
-
-/// Read an optional env var (empty counts as unset).
-fn env_opt(key: &str) -> Option<String> {
-    std::env::var(key).ok().filter(|v| !v.is_empty())
-}
 
 /// Read a boolean env flag ("1"/"true"/"yes").
 fn env_flag(key: &str) -> bool {
@@ -268,7 +264,6 @@ async fn main() -> Result<()> {
                 session: st.live_session(),
                 enrollment: cli.enroll.clone(),
                 node_name: st.name.clone(),
-                relay: env_opt("TELESH_RELAY"),
                 no_portmap: env_flag("TELESH_NO_PORTMAP"),
                 persist_file: Some(state_path.clone()),
                 tcp: None,
@@ -286,7 +281,6 @@ async fn main() -> Result<()> {
                 session: st.live_session(),
                 enrollment: cli.enroll.clone(),
                 node_name: st.name.clone(),
-                relay: env_opt("TELESH_RELAY"),
                 no_portmap: env_flag("TELESH_NO_PORTMAP"),
                 persist_file: Some(state_path.clone()),
                 tcp: Some(control::TcpOptions {
@@ -317,7 +311,6 @@ async fn main() -> Result<()> {
                 control_addr: args.to.clone(),
                 services,
                 secret: args.secret.clone(),
-                relay: env_opt("TELESH_RELAY"),
                 no_portmap: env_flag("TELESH_NO_PORTMAP"),
                 secret_key: st.secret_key,
                 session: st.live_session(),
@@ -341,7 +334,6 @@ async fn main() -> Result<()> {
                 name,
                 local,
                 secret: args.secret.clone(),
-                relay: env_opt("TELESH_RELAY"),
                 no_portmap: env_flag("TELESH_NO_PORTMAP"),
                 retry_wait: Duration::from_secs(RETRY_WAIT_SECS),
             };

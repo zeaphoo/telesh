@@ -11,8 +11,8 @@ use iroh::SecretKey;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use telesh_protocol::{
-    decode, encode, login_message, AuthMethod, AuthResponse, ClientHello, ClientKind, Frame,
-    ServerHello, PROTOCOL_VERSION,
+    decode, encode, login_message, AuthMethod, AuthResponse, ClientHello,
+    ClientKind, Frame, ServerHello,
 };
 
 type WsStream = tokio_tungstenite::WebSocketStream<
@@ -45,7 +45,6 @@ pub async fn login(
 ) -> Result<(Login, ServerHello)> {
     let sk = SecretKey::from_bytes(secret_key);
     let hello = ClientHello {
-        protocol_version: PROTOCOL_VERSION,
         client_kind: ClientKind::Agent,
         method: AuthMethod::Keypair,
         public_key: Some(*sk.public().as_bytes()),
@@ -54,7 +53,7 @@ pub async fn login(
         sub_domain,
         display_name,
     };
-    ws.send(WsMessage::Binary(encode(&Frame::Hello(hello))?))
+    ws.send(WsMessage::Text(encode(&Frame::Hello(hello))?))
         .await?;
 
     let mut login: Option<Login> = None;
@@ -65,16 +64,16 @@ pub async fn login(
             .context("timed out during login")?
             .context("control connection closed during login")?
             .context("control connection error during login")?;
-        let data = match msg {
-            WsMessage::Binary(data) => data,
+        let text = match msg {
+            WsMessage::Text(text) => text,
             WsMessage::Close(_) => bail!("control server closed during login"),
             _ => continue,
         };
-        match decode(&data)? {
+        match decode(&text)? {
             Frame::AuthChallenge(challenge) => {
                 let message = login_message(&challenge.server_id, &challenge.nonce, challenge.ts);
                 let signature = sk.sign(&message).to_bytes().to_vec();
-                ws.send(WsMessage::Binary(encode(&Frame::AuthResponse(
+                ws.send(WsMessage::Text(encode(&Frame::AuthResponse(
                     AuthResponse { signature },
                 ))?))
                 .await?;
@@ -99,7 +98,7 @@ pub async fn login(
                 server_hello = Some(hello);
             }
             Frame::Ping => {
-                ws.send(WsMessage::Binary(encode(&Frame::Pong)?)).await?;
+                ws.send(WsMessage::Text(encode(&Frame::Pong)?)).await?;
             }
             _ => {}
         }

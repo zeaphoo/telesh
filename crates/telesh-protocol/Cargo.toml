@@ -8,11 +8,19 @@ rust-version.workspace = true
 
 [dependencies]
 serde = { workspace = true }
-bincode = { workspace = true }
+serde_json = "1"
+base64 = "0.22"
+# Data-plane signalling stream: CBOR payloads over a length-prefixed framing.
+ciborium = { workspace = true }
+serde_bytes = { workspace = true }
+bytes = { workspace = true }
+tokio-util = { workspace = true }
 thiserror = { workspace = true }
 rand = { workspace = true }
 sha2 = { workspace = true }
 # Identity + addressing for the P2P control messages. Pulls in no runtime.
-iroh-base = { workspace = true }
+# `key` is required for `EndpointId` / `EndpointAddr`; without it the crate only
+# builds by accident, through workspace feature unification.
+iroh-base = { workspace = true, features = ["key"] }
 # HMAC-SHA256 for short-lived visitor access tokens.
 hmac = "0.12"

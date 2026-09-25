@@ -10,6 +10,10 @@ rust-version.workspace = true
 telesh-protocol = { path = "../telesh-protocol" }
 # P2P data plane (hole-punched QUIC + relay fallback + port mapping).
 iroh = { workspace = true }
+# Agent-initiated data plane: yamux over TCP + length-prefixed CBOR signalling.
+yamux = { workspace = true }
+tokio-util = { workspace = true }
+bytes = { workspace = true }
 # Router port mapping (UPnP/PCP/NAT-PMP) for the `p2p --map-tcp` public export.
 portmapper = "0.19"
 tokio = { workspace = true }

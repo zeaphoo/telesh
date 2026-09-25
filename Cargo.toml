@@ -28,3 +28,13 @@ tokio-tungstenite = "0.24"
 # (identity + addressing) used by the wire protocol.
 iroh = "1.2"
 iroh-base = "1.2"
+# Data plane: agent-initiated TCP connection multiplexed with yamux.
+yamux = "0.14"
+# CBOR for the data-plane signalling stream; `serde_bytes` keeps byte strings
+# native instead of turning them into arrays of integers.
+ciborium = "0.2"
+serde_bytes = "0.11"
+bytes = "1"
+# Length-prefixed framing (`codec`) and futures-io <-> tokio adaptation
+# (`compat`) for the yamux streams.
+tokio-util = { version = "0.7", features = ["codec", "compat"] }
