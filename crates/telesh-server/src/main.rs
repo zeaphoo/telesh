@@ -45,14 +45,14 @@ async fn main() -> anyhow::Result<()> {
 
     let ctrl_addr = cfg.control_addr;
 
-    // 一个 HTTP 监听同时提供控制面和 dashboard:agent 连 `/tunnel`,浏览器开
+    // 一个 HTTP 监听同时提供控制面和 dashboard:agent 连 `/api/tunnel`,浏览器开
     // `/` 看管理界面、`/api/*` 和 `/metrics`。
     let app = control::router()
         .merge(dashboard::router())
         .into_make_service_with_connect_info::<SocketAddr>();
     let http = async move {
         let listener = tokio::net::TcpListener::bind(ctrl_addr).await?;
-        tracing::info!(%ctrl_addr, "control server + dashboard listening (ws://.../tunnel, http://.../)");
+        tracing::info!(%ctrl_addr, "control server + dashboard listening (ws://.../api/tunnel, http://.../)");
         axum::serve(listener, app).await?;
         Ok::<_, anyhow::Error>(())
     };

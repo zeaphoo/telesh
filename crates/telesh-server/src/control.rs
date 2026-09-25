@@ -27,11 +27,11 @@ use crate::state::registry;
 const PING_INTERVAL: Duration = Duration::from_secs(30);
 const PING_TIMEOUT: Duration = Duration::from_secs(90);
 
-/// axum router mounted at `/tunnel`.
+/// axum router mounted at `/api/tunnel`.
 pub fn router() -> axum::Router {
     axum::Router::new()
-        .route("/tunnel", axum::routing::get(tunnel_ws))
-        .route("/healthz", axum::routing::get(|| async { "ok" }))
+        .route("/api/tunnel", axum::routing::get(tunnel_ws))
+        .route("/api/healthz", axum::routing::get(|| async { "ok" }))
 }
 
 async fn tunnel_ws(

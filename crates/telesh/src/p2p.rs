@@ -271,7 +271,7 @@ async fn subscribe(
     info_tx: watch::Sender<Option<ServiceInfo>>,
     relay_tx: tokio::sync::oneshot::Sender<Option<String>>,
 ) -> Result<()> {
-    let url = format!("ws://{control_addr}/tunnel");
+    let url = format!("ws://{control_addr}/api/tunnel");
     let (mut ws, _) = tokio_tungstenite::connect_async(&url)
         .await
         .with_context(|| format!("failed to connect to control server at {url}"))?;

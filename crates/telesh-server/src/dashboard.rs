@@ -1,12 +1,11 @@
 //! Dashboard HTTP API + built frontend hosting.
 //!
-//! Serves read-only admin views of the server state on its own port
-//! (`--dashboard-addr`), so it never touches the agent control plane:
-//!   GET /api/clients     online agents
-//!   GET /api/tunnels     registered tunnels (http + tcp)
-//!   GET /api/metrics     aggregated counters
-//!   GET /metrics         Prometheus text format
-//!   GET /                built frontend from server-ui/dist (if present)
+//! 与控制面共用 `control_addr` 那个监听。页面之外的路径都在 `/api` 下:
+//!   GET /api/clients            online agents
+//!   GET /api/tunnels            registered tunnels (http + tcp)
+//!   GET /api/metrics            aggregated counters
+//!   GET /api/metrics/prometheus Prometheus text format
+//!   GET /                       built frontend from server-ui/dist (if present)
 
 use axum::extract::{Path as UrlPath, State};
 use axum::http::StatusCode;
@@ -34,7 +33,7 @@ pub fn router() -> axum::Router {
         .route("/api/clients", get(api_clients))
         .route("/api/tunnels", get(api_tunnels))
         .route("/api/metrics", get(api_metrics))
-        .route("/metrics", get(prometheus))
+        .route("/api/metrics/prometheus", get(prometheus))
         .route("/", get(index))
         .route("/{*path}", get(assets))
         .with_state(DashboardState)

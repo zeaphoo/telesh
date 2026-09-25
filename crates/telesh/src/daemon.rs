@@ -76,7 +76,7 @@ pub async fn run(creds: Credentials) -> Result<()> {
 }
 
 async fn session(creds: &Credentials, shared: &Arc<Shared>) -> Result<()> {
-    let url = format!("ws://{}/tunnel", creds.control_addr);
+    let url = format!("ws://{}/api/tunnel", creds.control_addr);
     let (mut ws, _) = tokio_tungstenite::connect_async(&url)
         .await
         .with_context(|| format!("failed to connect to control server at {url}"))?;

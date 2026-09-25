@@ -12,8 +12,8 @@ payload(payload 走 iroh 或数据面,见 `design-p2p.md`、`design-dataplane.md
 
 | 项 | 内容 |
 |---|---|
-| 传输 | WebSocket `ws://<server>:<control_port>/tunnel` |
-| 探活 | `GET /healthz`(纯 HTTP,不是消息) |
+| 传输 | WebSocket `ws://<server>:<control_port>/api/tunnel` |
+| 探活 | `GET /api/healthz`(纯 HTTP,不是消息) |
 | 连接数 | 每个 agent 一条长连接;lookup-only peer 各自一条 |
 | 保活 | server 每 30s 发 `ping`,90s 内没有收到任何帧则断开 |
 | 首帧 | 必须在 10s 内到达 |

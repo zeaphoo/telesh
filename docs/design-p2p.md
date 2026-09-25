@@ -132,7 +132,7 @@ agent 还会额外构建一个 iroh endpoint，使用 `ServerHello::Success` 中
 
 - 每条 P2P 流都在 agent 中计数（`P2P_BYTES_SENT` / `P2P_BYTES_RECV`）。
 - `run_expose` 每 10s 发送一次带增量值的 `Traffic` 报告。
-- 服务端把它们记录为流量计数器中的 `p2p:<name>`，可在仪表盘和 `/metrics` 中查看。
+- 服务端把它们记录为流量计数器中的 `p2p:<name>`，可在仪表盘和 `/api/metrics/prometheus` 中查看。
 - 公网 HTTP/TCP 的字节由服务端在数据连接上转发,按通常的 `http:<sub>` / `tcp:<port>` 键计数。
 
 ## 10. 配置
@@ -156,7 +156,7 @@ TOML 文件读,字段都可以省略。示例见 `crates/telesh-server/server.to
 | 配置字段 | 含义 |
 |---|---|
 | `dataroot` | 数据根目录(数据库、ACME 缓存等),默认 `~/.telesh` |
-| `control_addr` | agent 连控制面的端口;同一个端口也提供 dashboard(`/`、`/api/*`、`/metrics`) |
+| `control_addr` | agent 连控制面的端口(`/api/tunnel`);同一个端口也提供 dashboard(`/`、`/api/*`) |
 | `ingress_addr` / `data_addr` | 公网入口 / 数据面监听地址 |
 | `public_host` | 拼隧道 URL 的公网后缀 |
 | `secret` / `lookup_secret` / `enrollment_secret` | 主密钥 / 查询密钥 / 注册密钥 |

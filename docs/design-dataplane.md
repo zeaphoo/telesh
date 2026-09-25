@@ -37,7 +37,7 @@
 ## 2. 拓扑与角色
 
 ```text
-控制面   agent -> server   ws://<server>:<control_port>/tunnel   (不变)
+控制面   agent -> server   ws://<server>:<control_port>/api/tunnel   (不变)
                             登录、子域、TcpRegister、P2P 目录、保活、计量
 
 数据面   agent -> server   tcp://<server>:<data_port>            (新增,独立端口)

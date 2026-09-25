@@ -80,7 +80,7 @@ pub struct Config {
     /// 数据根目录:数据库、证书缓存等都放这里。默认 `~/.telesh`。
     pub dataroot: PathBuf,
 
-    /// agent 连控制面的地址(`ws://.../tunnel`)。同一个端口也提供 dashboard
+    /// agent 连控制面的地址(`ws://.../api/tunnel`)。同一个端口也提供 dashboard
     /// (`/` 前端、`/api/*`、`/metrics`)。
     pub control_addr: SocketAddr,
 
