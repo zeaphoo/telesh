@@ -175,9 +175,10 @@ server 侧,每条公网 TCP 连接:
 
 stream 1 是信令流(§4),**永不承载 payload**;server 只为公网连接开偶数流。
 
-- 不需要 `service` 字段:一条数据连接对应 agent 的单一本地目标(现有
-  `opts.local`,一个 agent 进程一个目标)。将来若让一条数据连接服务多个目标,再
-  在流首加一个小头即可,不影响传输层。
+- **流首有目标头** `[u16 BE len][target]`(§8):一条数据连接现在服务多个本地端口,
+  服务端开流后先写目标,之后才是裸字节。编码与 iroh 前导的 `service` 字段**完全一致**
+  (`telesh_protocol::stream::read_service` / `write_service` 一份实现);iroh 路径也把
+  目标放进前导的 service 里,所以 agent 侧的目标表只有一份。
 - **不需要 ack,但也拿不到显式的"拒绝"信号**。原始设想是让 agent 用 **RST** 表示
   本地 dial 失败,实现时发现:**yamux 把流被 reset 读成 `Ok(0)`(干净 EOF)**,和正常
   关闭在 API 上无法区分。所以采用的判据是"**agent 关闭前一个字节都没回**":对 HTTP

@@ -16,7 +16,6 @@ use tracing::{debug, warn};
 
 use crate::config::config;
 use crate::metrics;
-use crate::registry::AgentConn;
 use crate::state::registry;
 
 const MAX_PEEK_BYTES: usize = 4096;
@@ -51,8 +50,8 @@ async fn handle_socket(mut socket: TcpStream) -> anyhow::Result<()> {
         return Ok(());
     };
 
-    let client = match registry().find_by_host(&sub_domain) {
-        Some(c) => c,
+    let route = match registry().route(&sub_domain) {
+        Some(r) => r,
         None => {
             warn!(%host, "no agent for host");
             write_error(&mut socket, "404", "Tunnel Not Found").await?;
@@ -60,8 +59,8 @@ async fn handle_socket(mut socket: TcpStream) -> anyhow::Result<()> {
         }
     };
     metrics::inc_requests();
-    debug!(%host, sub_domain, agent_id = %client.agent_id, "routing connection");
-    open_stream(client, socket, format!("http:{sub_domain}")).await;
+    debug!(%host, sub_domain, agent_id = %route.agent_id, "routing connection");
+    open_stream(socket, &route.agent_id, &route.target, format!("http:{sub_domain}")).await;
     Ok(())
 }
 
@@ -70,23 +69,30 @@ async fn handle_socket(mut socket: TcpStream) -> anyhow::Result<()> {
 /// Order: direct iroh data plane (opportunistic) → agent-initiated data plane →
 /// refuse the public connection. `traffic_key` names the tunnel in metrics and
 /// also decides whether an error response makes sense (HTTP tunnels only).
-pub async fn open_stream(client: AgentConn, mut socket: TcpStream, traffic_key: String) {
+pub async fn open_stream(
+    mut socket: TcpStream,
+    agent_id: &str,
+    target: &str,
+    traffic_key: String,
+) {
     let http = traffic_key.starts_with("http:");
 
     // 1) iroh direct path.
     if let Some(endpoint) = crate::state::server_endpoint() {
-        if let Some(addr) = registry().iroh_addr(&client.agent_id) {
+        if let Some(addr) = registry().iroh_addr(agent_id) {
             match crate::gateway::dial(endpoint, addr).await {
                 Ok((conn, mut send, mut recv)) => {
+                    // 两条传输的流首都用同一个目标字段编码:iroh 前导里的 service
+                    // 和数据面的目标头都是 agent 侧的目标(见 docs/design-dataplane.md §8)。
                     if let Err(e) =
-                        crate::gateway::write_handshake(&mut send, &config().secret, "").await
+                        crate::gateway::write_handshake(&mut send, &config().secret, target).await
                     {
                         debug!("iroh prelude failed, falling back to the data plane: {e:#}");
                         drop(conn);
                     } else {
                         match crate::gateway::read_ack(&mut recv).await {
                             Ok(crate::gateway::Ack::Ok) => {
-                                debug!(agent_id = %client.agent_id, key = %traffic_key, "routing over iroh");
+                                debug!(agent_id, key = %traffic_key, "routing over iroh");
                                 metrics::inc_conns();
                                 let (up, down) = crate::gateway::pump(socket, send, recv).await;
                                 metrics::add_traffic(&traffic_key, up, down);
@@ -96,7 +102,7 @@ pub async fn open_stream(client: AgentConn, mut socket: TcpStream, traffic_key: 
                             }
                             Ok(crate::gateway::Ack::Refused) => {
                                 // Definitive: the agent could not serve it.
-                                debug!(agent_id = %client.agent_id, "agent refused iroh stream");
+                                debug!(agent_id, "agent refused iroh stream");
                                 drop(conn);
                                 return;
                             }
@@ -113,22 +119,22 @@ pub async fn open_stream(client: AgentConn, mut socket: TcpStream, traffic_key: 
     }
 
     // 2) Agent-initiated data plane.
-    if let Some(handle) = registry().data_handle(&client.agent_id) {
-        match handle.open_stream().await {
+    if let Some(handle) = registry().data_handle(agent_id) {
+        match handle.open_stream(target).await {
             Ok(stream) => {
-                debug!(agent_id = %client.agent_id, key = %traffic_key, "routing over the data plane");
+                debug!(agent_id, target, key = %traffic_key, "routing over the data plane");
                 metrics::inc_conns();
                 let (up, down) = pump_data(socket, stream, http).await;
                 metrics::add_traffic(&traffic_key, up, down);
                 metrics::dec_conns();
                 return;
             }
-            Err(e) => warn!(agent_id = %client.agent_id, "cannot open a data stream: {e:#}"),
+            Err(e) => warn!(agent_id, "cannot open a data stream: {e:#}"),
         }
     }
 
     // 3) No path to the agent.
-    warn!(agent_id = %client.agent_id, key = %traffic_key, "no data path for this agent");
+    warn!(agent_id, target, key = %traffic_key, "no data path for this agent");
     if http {
         let _ = write_error(&mut socket, "503", "Tunnel data path unavailable").await;
     }
@@ -146,13 +152,16 @@ pub async fn open_stream(client: AgentConn, mut socket: TcpStream, traffic_key: 
 /// side finishing means the client half-closed (we FIN the agent stream and let
 /// it drain its response). Either way the agent stream is closed with an explicit
 /// `shutdown` (FIN) — dropping it would send RST and can lose buffered data.
-async fn pump_data(socket: TcpStream, stream: yamux::Stream, http: bool) -> (u64, u64) {
+async fn pump_data(
+    socket: TcpStream,
+    stream: tokio_util::compat::Compat<yamux::Stream>,
+    http: bool,
+) -> (u64, u64) {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
-    use tokio_util::compat::FuturesAsyncReadCompatExt;
 
     let (mut pub_r, mut pub_w) = socket.into_split();
-    let (mut s_r, mut s_w) = tokio::io::split(stream.compat());
+    let (mut s_r, mut s_w) = tokio::io::split(stream);
     let wrote_back = Arc::new(AtomicBool::new(false));
     let up_bytes = Arc::new(AtomicU64::new(0));
 

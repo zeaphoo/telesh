@@ -36,7 +36,8 @@ pub fn decode(text: &str) -> Result<Frame, CodecError> {
 mod tests {
     use super::*;
     use crate::message::{
-        AuthMethod, AuthOk, ClientHello, ClientKind, P2PAnnounce, ServerHello,
+        AuthMethod, AuthOk, ClientHello, ClientKind, P2PAnnounce, ServerHello, TunnelClose,
+        TunnelKind, TunnelPublish, TunnelResp, TunnelResult,
     };
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
 
@@ -67,7 +68,6 @@ mod tests {
                 public_key: Some([7u8; 32]),
                 session: Some(vec![1, 2, 3, 4]),
                 enrollment: Some("enroll".into()),
-                sub_domain: Some("web".into()),
                 display_name: Some("Calm Otter".into()),
             }),
             Frame::AuthOk(AuthOk {
@@ -77,13 +77,28 @@ mod tests {
                 display_name: "Calm Otter".into(),
             }),
             Frame::ServerHello(ServerHello::Success {
-                sub_domain: "web".into(),
-                hostname: "web.example.com".into(),
                 agent_id: "000012345".into(),
                 relay_url: Some("https://relay.example.com/".into()),
                 data_addr: Some("203.0.113.7:9008".into()),
             }),
-            Frame::ServerHello(ServerHello::SubDomainInUse),
+            Frame::TunnelPublish(TunnelPublish {
+                id: 7,
+                kind: TunnelKind::Http,
+                target: "8000".into(),
+                name: Some("web".into()),
+                remote_port: None,
+            }),
+            Frame::TunnelResp(TunnelResp {
+                id: 7,
+                result: TunnelResult::Http {
+                    sub_domain: "web".into(),
+                    hostname: "web.example.com".into(),
+                },
+            }),
+            Frame::TunnelClose(TunnelClose {
+                kind: TunnelKind::Http,
+                key: "web".into(),
+            }),
             Frame::IrohReady(endpoint_addr()),
             Frame::P2PAnnounce(P2PAnnounce {
                 name: "svc".into(),

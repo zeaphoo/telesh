@@ -4073,6 +4073,7 @@ dependencies = [
  "rand 0.8.8",
  "rust-embed",
  "serde",
+ "serde_json",
  "sha2 0.10.9",
  "telesh-protocol",
  "tokio",
@@ -4099,6 +4100,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror 1.0.69",
+ "tokio",
  "tokio-util",
 ]
 

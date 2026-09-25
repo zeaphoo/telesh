@@ -109,7 +109,8 @@ async fn api_clients() -> impl IntoResponse {
         .into_iter()
         .map(|c| ClientRow {
             agent_id: c.agent_id.clone(),
-            sub_domain: c.sub_domain.clone(),
+            // 一个 agent 现在可以挂多条 HTTP 隧道;这里把它们并起来展示。
+            sub_domain: reg.sub_domains_of(&c.agent_id).join(", "),
             online_secs: c.connected_at.elapsed().as_secs(),
         })
         .collect();
@@ -118,13 +119,13 @@ async fn api_clients() -> impl IntoResponse {
 
 async fn api_tunnels() -> impl IntoResponse {
     let mut tunnels: Vec<TunnelRow> = Vec::new();
-    // Host-routed (http) tunnels: one per connected agent's subdomain.
-    for c in get_registry().list() {
-        let (in_bytes, out_bytes) = traffic_for(&format!("http:{}", c.sub_domain));
+    // Host-routed (http) tunnels: one per registered subdomain.
+    for (sub_domain, _route) in get_registry().routes() {
+        let (in_bytes, out_bytes) = traffic_for(&format!("http:{sub_domain}"));
         tunnels.push(TunnelRow {
-            name: c.sub_domain.clone(),
+            name: sub_domain.clone(),
             kind: "http".to_string(),
-            remote: c.sub_domain.clone(),
+            remote: sub_domain,
             status: "online",
             in_bytes,
             out_bytes,

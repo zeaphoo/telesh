@@ -13,9 +13,8 @@
 //! NAT-PMP port mapping. The WebSocket control plane is used only to exchange
 //! the address and to keep the directory entry alive.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::num::NonZeroU16;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -33,8 +32,8 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tracing::{debug, info, warn};
 
 use telesh_protocol::{
-    decode, encode, Frame, LookupHello, P2PAddrResp, P2PAnnounce, P2PAnnounceResp, P2PLookup,
-    ServerHello, TcpMapped, TrafficReport, STREAM_ACK_ERR, STREAM_ACK_OK,
+    decode, encode, Frame, LookupHello, P2PAddrResp, P2PLookup, ServerHello, TrafficReport,
+    STREAM_ACK_ERR, STREAM_ACK_OK,
 };
 
 /// ALPN identifying the telesh P2P data plane.
@@ -46,18 +45,8 @@ const MAX_PRELUDE: usize = 256;
 /// How long to wait for a direct/relayed iroh connection to a peer.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// How long to wait for a home relay before announcing. Bounded so a blocked
-/// or absent relay cannot stall startup; direct addresses still work on a LAN.
-const RELAY_WAIT: Duration = Duration::from_secs(8);
-
-/// How often the expose loop reports P2P byte counters to the server.
-const TRAFFIC_REPORT_INTERVAL: Duration = Duration::from_secs(10);
-
 /// How often a peer refreshes its access token (well within the server TTL).
 const TOKEN_REFRESH_SECS: u64 = 150;
-
-/// How long to wait for a router port mapping before giving up.
-const TCP_MAP_WAIT: Duration = Duration::from_secs(15);
 
 /// Per-service P2P byte counters (sent, received). The server cannot observe
 /// this traffic, so the agent reports deltas periodically.
@@ -82,37 +71,22 @@ fn record_traffic(name: &str, up: u64, down: u64) {
     }
 }
 
-/// One local service exposed over the shared iroh endpoint.
-#[derive(Debug, Clone)]
-pub struct P2PExpose {
-    /// Service name peers look up. `None` defaults to the endpoint id and is
-    /// only allowed when a single service is exposed.
-    pub name: Option<String>,
-    /// Local address to forward this service's traffic to.
-    pub local: SocketAddr,
-}
-
-/// Parameters for exposing one or more local ports over a single iroh endpoint.
-#[derive(Debug, Clone)]
-pub struct ExposeOptions {
-    pub control_addr: String,
-    /// One entry per exposed port; all share the same endpoint/identity.
-    pub services: Vec<P2PExpose>,
-    pub secret: Option<String>,
-    /// Disable UPnP/PCP/NAT-PMP gateway probing.
-    pub no_portmap: bool,
-    pub secret_key: [u8; 32],
-    /// Cached login session, if any.
-    pub session: Option<Vec<u8>>,
-    /// Enrollment secret for first registration.
-    pub enrollment: Option<String>,
-    /// Friendly node name sent at login (defaults to the generated state name).
-    pub node_name: Option<String>,
-    /// Where to persist the refreshed login session.
-    pub persist_file: Option<std::path::PathBuf>,
-    /// Also request a router port mapping for every exposed service, exposing
-    /// them publicly without iroh or the server.
-    pub map_tcp: bool,
+/// 上报并清空 P2P 流量计数(服务端看不到这些字节)。
+pub(crate) fn drain_traffic() -> Vec<TrafficReport> {
+    let mut out = Vec::new();
+    for entry in p2p_traffic().iter() {
+        let up = entry.value().0.swap(0, Ordering::Relaxed);
+        let down = entry.value().1.swap(0, Ordering::Relaxed);
+        if up == 0 && down == 0 {
+            continue;
+        }
+        out.push(TrafficReport {
+            name: entry.key().clone(),
+            up,
+            down,
+        });
+    }
+    out
 }
 
 /// Parameters for mirroring a remote service onto a local port.
@@ -130,213 +104,6 @@ pub struct ConnectOptions {
     /// How long to hold an accepted local connection while the P2P link
     /// recovers, retrying the stream setup (never after payload flows).
     pub retry_wait: Duration,
-}
-
-/// Run one expose session: announce the endpoint, then serve P2P streams until
-/// the control connection drops (the caller reconnects).
-pub async fn run_expose(opts: &ExposeOptions) -> Result<()> {
-    if opts.services.is_empty() {
-        bail!("no services to expose");
-    }
-    if opts.services.len() > 1 && opts.services.iter().any(|s| s.name.is_none()) {
-        bail!("each exposed port needs a name when exposing more than one");
-    }
-    let url = format!("ws://{}/tunnel", opts.control_addr);
-    info!(%url, "p2p agent connecting to control server");
-    let (mut ws, _) = tokio_tungstenite::connect_async(&url)
-        .await
-        .with_context(|| format!("failed to connect to control server at {url}"))?;
-
-    // ---- Login + tunnel setup ----
-    // P2P is not Host-routed, so no subdomain is requested.
-    let (login, server_hello) = crate::auth::login(
-        &mut ws,
-        &opts.secret_key,
-        opts.session.clone(),
-        opts.enrollment.as_deref(),
-        None,
-        opts.node_name.clone(),
-    )
-    .await?;
-    info!(account = %login.account, name = %login.display_name, "logged in");
-    // The relay is the server's choice, announced with the handshake; the
-    // agent holds no relay configuration of its own.
-    let relay = server_hello.relay_url().map(str::to_string);
-    if let Some(url) = &relay {
-        info!(relay = %url, "using server-announced iroh relay");
-    }
-    let account = login.account.clone();
-    if let Some(path) = &opts.persist_file {
-        if let Err(e) = crate::state::save_session(path, &login.session, login.expires_at) {
-            warn!(path = %path.display(), "cannot persist session: {e:#}");
-        }
-    }
-
-    // ---- iroh endpoint ----
-    let endpoint = build_endpoint(
-        SecretKey::from_bytes(&opts.secret_key),
-        relay.as_deref(),
-        opts.no_portmap,
-    )
-    .await?;
-    // Wait briefly for a home relay so `addr()` carries a reachable route in
-    // addition to direct addresses. Same-host/LAN peers can still connect via
-    // the direct addresses even if no relay was reached in time.
-    if tokio::time::timeout(RELAY_WAIT, endpoint.online())
-        .await
-        .is_err()
-    {
-        warn!("iroh endpoint not online yet; announcing direct addresses only");
-    }
-    let addr = endpoint.addr();
-
-    // Resolve effective service names (default = endpoint id for a single
-    // service) and build the on-stream dispatch table.
-    let mut targets: HashMap<String, SocketAddr> = HashMap::new();
-    let mut announced: Vec<(String, SocketAddr)> = Vec::new();
-    for service in &opts.services {
-        let name = service
-            .name
-            .clone()
-            .unwrap_or_else(|| addr.id.fmt_short().to_string());
-        if !telesh_protocol::validate_subdomain(&name) {
-            bail!("invalid service name {name:?} (use [a-z0-9-], 1..=63 chars)");
-        }
-        targets.insert(name.clone(), service.local);
-        announced.push((name, service.local));
-    }
-
-    for (name, local) in &announced {
-        ws.send(ws_text(&Frame::P2PAnnounce(P2PAnnounce {
-            name: name.clone(),
-            addr: addr.clone(),
-            local_port: local.port(),
-        }))?)
-        .await?;
-    }
-    // The server confirms ownership per name; a taken name is a hard error so
-    // the operator notices instead of silently serving under a stale identity.
-    let mut pending: HashSet<String> = announced.iter().map(|(n, _)| n.clone()).collect();
-    while !pending.is_empty() {
-        match tokio::time::timeout(Duration::from_secs(10), ws.next()).await {
-            Ok(Some(Ok(WsMessage::Text(text)))) => match decode(&text)? {
-                Frame::P2PAnnounceResp(P2PAnnounceResp::Ok { name }) => {
-                    pending.remove(&name);
-                }
-                Frame::P2PAnnounceResp(P2PAnnounceResp::NameTaken { name }) => {
-                    bail!("p2p service name {name:?} is already in use by another peer");
-                }
-                Frame::P2PAnnounceResp(P2PAnnounceResp::InvalidName { name }) => {
-                    bail!("invalid p2p service name {name:?}");
-                }
-                Frame::Ping => ws.send(ws_text(&Frame::Pong)?).await?,
-                _ => {}
-            },
-            Ok(Some(Ok(_))) => {}
-            Ok(Some(Err(e))) => bail!("control connection error during announce: {e}"),
-            Ok(None) => bail!("control connection closed during announce"),
-            Err(_) => bail!("timed out waiting for the server to accept service names"),
-        }
-    }
-    info!(
-        endpoint = %addr.id.to_string(),
-        services = ?announced.iter().map(|(n, l)| format!("{n}={l}")).collect::<Vec<_>>(),
-        "p2p services announced (peer id above; share it or the service name to connect)"
-    );
-
-    let serve = tokio::spawn(serve_endpoint(
-        endpoint,
-        Arc::new(targets),
-        opts.secret.clone(),
-        Some(account.clone()),
-    ));
-
-    // Optional: expose each local service publicly through a router port
-    // mapping (UPnP/PCP/NAT-PMP). The clients must stay alive for the mappings
-    // to remain active.
-    let mut _tcp_maps: Vec<portmapper::Client> = Vec::new();
-    if opts.map_tcp {
-        for (name, local) in &announced {
-            match map_tcp_port(local.port(), TCP_MAP_WAIT).await {
-                Ok((public, client)) => {
-                    info!(service = %name, public = %public, "tcp port mapped — reachable publicly without iroh");
-                    ws.send(ws_text(&Frame::TcpMapped(TcpMapped {
-                        name: name.clone(),
-                        addr: public,
-                        local_port: local.port(),
-                    }))?)
-                    .await?;
-                    _tcp_maps.push(client);
-                }
-                Err(e) => warn!(service = %name, "tcp port mapping unavailable: {e:#}"),
-            }
-        }
-    }
-
-    // ---- Keep the control connection (and directory entries) alive ----
-    // A dedicated writer channel keeps the periodic traffic report from
-    // borrowing the socket alongside the read half.
-    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Frame>();
-    // Data-plane streams validate opaque tokens via this control connection.
-    crate::token_check::set_control(out_tx.clone());
-    let (mut sink, mut stream) = ws.split();
-    let sink_task = tokio::spawn(async move {
-        while let Some(frame) = out_rx.recv().await {
-            match encode(&frame) {
-                Ok(text) => {
-                    if sink.send(WsMessage::Text(text)).await.is_err() {
-                        break;
-                    }
-                }
-                Err(e) => debug!("frame encode failed: {e}"),
-            }
-        }
-    });
-
-    let mut report = tokio::time::interval(TRAFFIC_REPORT_INTERVAL);
-    report.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let res = 'serve: loop {
-        tokio::select! {
-            _ = report.tick() => {
-                for entry in p2p_traffic().iter() {
-                    let up = entry.value().0.swap(0, Ordering::Relaxed);
-                    let down = entry.value().1.swap(0, Ordering::Relaxed);
-                    if up == 0 && down == 0 {
-                        continue;
-                    }
-                    let report = Frame::Traffic(TrafficReport {
-                        name: entry.key().clone(),
-                        up,
-                        down,
-                    });
-                    if out_tx.send(report).is_err() {
-                        break 'serve Ok(());
-                    }
-                }
-            }
-            msg = stream.next() => match msg {
-                Some(Ok(WsMessage::Text(text))) => match decode(&text) {
-                    Ok(Frame::Ping) => {
-                        if out_tx.send(Frame::Pong).is_err() {
-                            break Ok(());
-                        }
-                    }
-                    Ok(Frame::TokenCheckResp(r)) => {
-                        crate::token_check::resolve(r.id, if r.ok { Some(r.expires_at) } else { None })
-                    }
-                    Ok(_) => {}
-                    Err(e) => debug!("bad frame from server: {e}"),
-                },
-                Some(Ok(WsMessage::Close(_))) => break Ok(()),
-                Some(Ok(_)) => {}
-                Some(Err(e)) => break Err(anyhow!("control connection error: {e}")),
-                None => break Ok(()),
-            }
-        }
-    };
-    sink_task.abort();
-    serve.abort();
-    res
 }
 
 /// Run one connect session: subscribe to a service, keep a live iroh connection
@@ -631,7 +398,7 @@ pub(crate) async fn build_endpoint(
 /// Accept P2P connections and turn each inbound stream into a local dial.
 pub(crate) async fn serve_endpoint(
     endpoint: Endpoint,
-    targets: Arc<HashMap<String, SocketAddr>>,
+    targets: Arc<dashmap::DashMap<String, SocketAddr>>,
     secret: Option<String>,
     account: Option<String>,
 ) {
@@ -675,7 +442,7 @@ pub(crate) async fn serve_endpoint(
 
 /// Authenticate a peer, resolve the named service, then pump both ways.
 async fn serve_stream(
-    targets: Arc<HashMap<String, SocketAddr>>,
+    targets: Arc<dashmap::DashMap<String, SocketAddr>>,
     secret: Option<String>,
     account: Option<String>,
     grants: Arc<Mutex<HashMap<String, u64>>>,
@@ -739,7 +506,7 @@ async fn serve_stream(
             }
         }
     }
-    let Some(local) = targets.get(name).copied() else {
+    let Some(local) = targets.get(name).map(|e| *e.value()) else {
         warn!(%service, "p2p peer requested unknown service");
         let _ = send.write_all(&[STREAM_ACK_ERR]).await;
         let _ = send.finish();
@@ -867,40 +634,6 @@ async fn pump(tcp: TcpStream, mut send: SendStream, mut recv: RecvStream) -> (u6
     };
     let (up, down) = tokio::join!(up, down);
     (up.unwrap_or(0), down.unwrap_or(0))
-}
-
-/// Ask the local gateway (UPnP/PCP/NAT-PMP) to map `local_port` over TCP.
-///
-/// The returned client must be kept alive: dropping it tears the mapping down.
-/// Fails on CGNAT, routers with UPnP disabled, or when no protocol answers.
-async fn map_tcp_port(
-    local_port: u16,
-    wait: Duration,
-) -> Result<(SocketAddr, portmapper::Client)> {
-    let Some(port) = NonZeroU16::new(local_port) else {
-        bail!("port 0 cannot be mapped");
-    };
-    let client = portmapper::Client::new(portmapper::Config {
-        enable_upnp: true,
-        enable_pcp: true,
-        enable_nat_pmp: true,
-        protocol: portmapper::Protocol::Tcp,
-    });
-    client.update_local_port(port);
-    let mut external = client.watch_external_address();
-    let deadline = tokio::time::Instant::now() + wait;
-    loop {
-        if let Some(addr) = *external.borrow() {
-            return Ok((SocketAddr::V4(addr), client));
-        }
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            bail!("no gateway accepted a TCP port mapping within {wait:?}");
-        }
-        if tokio::time::timeout(remaining, external.changed()).await.is_err() {
-            bail!("timed out waiting for a TCP port mapping");
-        }
-    }
 }
 
 /// Credential kinds for the stream preamble.

@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::Poll;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
@@ -54,16 +54,27 @@ enum DataCmd {
 }
 
 impl DataHandle {
-    /// 开一条新流。调用方负责按 yamux 的语义使用(EOF 时显式半关闭)。
-    pub async fn open_stream(&self) -> Result<yamux::Stream> {
+    /// 开一条新流,并写入流首目标头(`[u16 BE len][target]`,与 iroh 前导同一编码)。
+    ///
+    /// 返回的流已经是 tokio I/O;调用方负责按 yamux 的语义使用(EOF 时显式半关闭)。
+    pub async fn open_stream(
+        &self,
+        target: &str,
+    ) -> Result<tokio_util::compat::Compat<yamux::Stream>> {
         let (reply, rx) = oneshot::channel();
         self.cmd
             .send(DataCmd::Open(reply))
             .await
             .map_err(|_| anyhow::anyhow!("data connection is gone"))?;
-        rx.await
+        let stream = rx
+            .await
             .map_err(|_| anyhow::anyhow!("data connection dropped the open request"))?
-            .map_err(|e| anyhow::anyhow!(e))
+            .map_err(|e| anyhow::anyhow!(e))?;
+        let mut stream = stream.compat();
+        telesh_protocol::write_service(&mut stream, target)
+            .await
+            .context("failed to write the stream target header")?;
+        Ok(stream)
     }
 
     /// 请求驱动任务收尾(注册表在控制连接断开时调用)。

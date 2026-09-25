@@ -7,11 +7,9 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use anyhow::Context;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
-use tokio_util::compat::FuturesAsyncReadCompatExt;
 use tracing::debug;
 
 /// 本地拨号的超时。
@@ -21,8 +19,14 @@ const DIAL_TIMEOUT: Duration = Duration::from_secs(3);
 static NEXT_LOCAL_STREAM: AtomicU64 = AtomicU64::new(1);
 
 /// 处理一条数据面流:拨本地服务,然后双向泵。
-pub async fn handle_stream(stream: yamux::Stream, local_addr: SocketAddr) {
+///
+/// 流已经是 tokio I/O(目标头已由调用方读完)。
+pub async fn handle_stream<S>(stream: S, local_addr: SocketAddr)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     let stream_id = NEXT_LOCAL_STREAM.fetch_add(1, Ordering::Relaxed);
+    // 本地目标由端口扫描得出(127.0.0.1 或 ::1),不必再解析主机名。
     let conn = match timeout(DIAL_TIMEOUT, TcpStream::connect(local_addr)).await {
         Ok(Ok(conn)) => conn,
         Ok(Err(e)) => {
@@ -35,14 +39,18 @@ pub async fn handle_stream(stream: yamux::Stream, local_addr: SocketAddr) {
         }
     };
     debug!(stream_id, %local_addr, "data-plane stream accepted, pumping");
+    crate::inspect::start_stream(stream_id, local_addr);
     pump(conn, stream, stream_id).await;
     crate::inspect::finish_stream(stream_id);
 }
 
 /// 双向泵,直到任一侧结束。
-async fn pump(tcp: TcpStream, stream: yamux::Stream, stream_id: u64) {
+async fn pump<S>(tcp: TcpStream, stream: S, stream_id: u64)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     let (mut tcp_r, mut tcp_w) = tcp.into_split();
-    let (mut s_r, mut s_w) = tokio::io::split(stream.compat());
+    let (mut s_r, mut s_w) = tokio::io::split(stream);
 
     // 本地服务 -> 边缘
     let up = async {
@@ -90,12 +98,3 @@ async fn pump(tcp: TcpStream, stream: yamux::Stream, stream_id: u64) {
     tokio::join!(up, down);
 }
 
-/// Resolve `host:port` (host may be a hostname) to a socket address.
-pub async fn resolve_addr(host: &str, port: u16) -> anyhow::Result<SocketAddr> {
-    let mut addrs = tokio::net::lookup_host((host, port))
-        .await
-        .with_context(|| format!("failed to resolve local address {host}:{port}"))?;
-    addrs
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("no address resolved for local host {host}:{port}"))
-}

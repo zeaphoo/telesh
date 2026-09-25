@@ -1,6 +1,6 @@
 # 控制面协议(客户端 ↔ 服务端)
 
-状态:已实现(控制面 JSON 化 + 数据面能力下发均已落地)。
+状态:已实现(控制面 JSON 化、多隧道发布、数据面能力下发均已落地)。
 
 **这是控制协议的唯一出处。** 所有客户端模式共用它:`telesh http` / `telesh tcp` /
 `telesh p2p` / `telesh connect`,以及数据面连接的注册。控制面**只承载小消息**,不承载
@@ -68,7 +68,7 @@ HTTP 传输(可选,未定):同一套消息换成 JSON body,认证用
 线上实测样本(Python 客户端直连控制 WS):
 
 ```json
-{"type":"server_hello","data":{"success":{"sub_domain":"","hostname":"","agent_id":"probe-1","relay_url":"http://127.0.0.1:18099"}}}
+{"type":"server_hello","data":{"success":{"agent_id":"probe-1","relay_url":"http://127.0.0.1:18099","data_addr":"127.0.0.1:9008"}}}
 ```
 
 兼容规则:
@@ -86,7 +86,7 @@ HTTP 传输(可选,未定):同一套消息换成 JSON body,认证用
 ```
 agent                                                    control server
   │ hello{ client_kind:"agent", method:"keypair",
-  │        public_key, session?, enrollment?, sub_domain?, display_name? } ──►│
+  │        public_key, session?, enrollment?, display_name? } ──────────────►│
   │                                                                          │ session 有效 → auth_ok
   │ ◄────────────────────────── auth_challenge{ nonce, server_id, ts } ──────│
   │ sign("telesh-login-v1" ‖ server_id ‖ nonce ‖ ts.to_be_bytes())
@@ -119,16 +119,14 @@ lookup{ auth_key?, agent_id }        # agent_id 只是日志用的临时标识
 
 - 鉴权独立于账号体系:服务端配置了 `--secret` / `--lookup-secret` 时必须匹配其中之一
   (`lookup_auth_ok`),两者都没配置则放行。
-- 通过后服务端回 `server_hello.success`(`sub_domain` / `hostname` 为空),随后它只回答
-  `p2p_lookup` 和保活。
+- 通过后服务端回 `server_hello.success`(`agent_id` 只是日志用的临时标识),随后它只
+  回答 `p2p_lookup` 和保活。
 
 ### 3.4 server_hello
 
 | 变体 | 含义 |
 |---|---|
-| `success` | 握手完成;字段见 §4。**lookup-only 连接也会收到**,此时 `sub_domain`/`hostname` 为空 |
-| `sub_domain_in_use` | 请求的子域已被占用 |
-| `invalid_sub_domain` | 子域不合法(`[a-z0-9-]`,1..=63,不以 `-` 开头/结尾) |
+| `success` | 握手完成;字段见 §4。**lookup-only 连接也会收到** |
 | `auth_failed` | 鉴权失败(仅 lookup 连接用) |
 | `error(message)` | 其它错误 |
 
@@ -146,7 +144,7 @@ lookup{ auth_key?, agent_id }        # agent_id 只是日志用的临时标识
 
 | `type` | 方向 | 字段 | 用途 |
 |---|---|---|---|
-| `hello` | client → server(首帧) | `client_kind`, `method`, `public_key?`, `session?`, `enrollment?`, `sub_domain?`, `display_name?` | agent 登录 |
+| `hello` | client → server(首帧) | `client_kind`, `method`, `public_key?`, `session?`, `enrollment?`, `display_name?` | agent 登录(**不再带子域**:隧道级信息在各次发布里) |
 | `auth_challenge` | server → client | `nonce`, `server_id`, `ts` | 待签名挑战 |
 | `auth_response` | client → server | `signature`(base64,64B) | 挑战签名 |
 | `auth_ok` | server → client | `account`, `session`(base64), `expires_at`, `display_name` | 登录成功 |
@@ -154,8 +152,9 @@ lookup{ auth_key?, agent_id }        # agent_id 只是日志用的临时标识
 | `server_hello` | server → client | 见 §3.4 | 握手结果 + 能力下发 |
 | `lookup` | peer → server(首帧) | `auth_key?`, `agent_id` | lookup-only 连接 |
 | `ping` / `pong` | 双向 | 无 | 保活 |
-| `tcp_register` | agent → server | `requested_port?` | 申请公网 TCP 端口 |
-| `tcp_register_resp` | server → agent | `success{port}` / `port_in_use` / `invalid_port` / `error(msg)` | 端口分配结果 |
+| `tunnel_publish` | agent → server | `id`, `kind`(http/tcp), `target`, `name?`, `remote_port?` | 发布一条隧道;`id` 由 agent 生成,响应按它配对 |
+| `tunnel_resp` | server → agent | `id` + `http{sub_domain,hostname}` / `tcp{port}` / `name_taken` / `invalid` / `error(msg)` | 发布结果 |
+| `tunnel_close` | agent → server | `kind`(http/tcp/p2p), `key`(子域/公网端口/服务名) | 取消一条隧道 |
 | `p2p_announce` | agent → server | `name`, `addr`(EndpointAddr), `local_port` | 注册 `account/name → EndpointAddr` |
 | `p2p_announce_resp` | server → agent | `ok{name}` / `name_taken{name}` / `invalid_name{name}` | 每个名字的归属结果 |
 | `p2p_lookup` | peer → server | `account`, `name` | 解析目录项 |

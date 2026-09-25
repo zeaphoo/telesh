@@ -4,7 +4,10 @@
 //! stream 做鉴权(信令流),之后只接受服务端为每条公网连接开来的 payload 流。
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
+
+use dashmap::DashMap;
 
 use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
@@ -35,8 +38,8 @@ pub struct DataOptions {
     pub addr: SocketAddr,
     /// 登录拿到的会话令牌(数据连接复用它鉴权)。
     pub session: Vec<u8>,
-    /// 该 agent 进程要暴露的本地目标。
-    pub local: SocketAddr,
+    /// 目标名 → 本地地址(与控制面下发的 target 对应)。
+    pub targets: Arc<DashMap<String, SocketAddr>>,
 }
 
 /// 解析服务端下发的数据地址。
@@ -99,8 +102,22 @@ async fn session(opts: &DataOptions) -> Result<()> {
             }
             incoming = std::future::poll_fn(|cx| conn.poll_next_inbound(cx)) => match incoming {
                 Some(Ok(stream)) => {
-                    let local = opts.local;
-                    tokio::spawn(crate::local::handle_stream(stream, local));
+                    let targets = opts.targets.clone();
+                    tokio::spawn(async move {
+                        // 流首是目标头([u16 BE len][target],与 iroh 前导同一编码)。
+                        let mut stream = stream.compat();
+                        let target = match telesh_protocol::read_service(&mut stream).await {
+                            Ok(t) => t,
+                            Err(e) => {
+                                debug!("cannot read the stream target: {e}");
+                                return;
+                            }
+                        };
+                        match targets.get(&target).map(|e| *e.value()) {
+                            Some(local) => crate::local::handle_stream(stream, local).await,
+                            None => debug!(%target, "unknown stream target"),
+                        }
+                    });
                 }
                 Some(Err(e)) => {
                     debug!("yamux error: {e}");

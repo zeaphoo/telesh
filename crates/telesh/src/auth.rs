@@ -40,7 +40,6 @@ pub async fn login(
     secret_key: &[u8; 32],
     session: Option<Vec<u8>>,
     enrollment: Option<&str>,
-    sub_domain: Option<String>,
     display_name: Option<String>,
 ) -> Result<(Login, ServerHello)> {
     let sk = SecretKey::from_bytes(secret_key);
@@ -50,7 +49,6 @@ pub async fn login(
         public_key: Some(*sk.public().as_bytes()),
         session,
         enrollment: enrollment.map(str::to_string),
-        sub_domain,
         display_name,
     };
     ws.send(WsMessage::Text(encode(&Frame::Hello(hello))?))
@@ -89,10 +87,9 @@ pub async fn login(
             Frame::AuthError(err) => bail!("login rejected: {err:?}"),
             Frame::ServerHello(hello) => {
                 match &hello {
-                    ServerHello::SubDomainInUse
-                    | ServerHello::InvalidSubDomain
-                    | ServerHello::AuthFailed
-                    | ServerHello::Error(_) => bail!("server rejected tunnel: {hello:?}"),
+                    ServerHello::AuthFailed | ServerHello::Error(_) => {
+                        bail!("server rejected the connection: {hello:?}")
+                    }
                     ServerHello::Success { .. } => {}
                 }
                 server_hello = Some(hello);

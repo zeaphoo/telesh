@@ -30,6 +30,8 @@ const PAYLOAD_CAP: usize = 64 * 1024;
 #[derive(Debug, Clone, Serialize)]
 pub struct RequestRecord {
     pub id: u64,
+    /// 这条流当时拨向的本地地址(replay 用)。
+    pub local: Option<SocketAddr>,
     pub tunnel: String,
     pub method: String,
     pub path: String,
@@ -81,6 +83,8 @@ pub struct Inspector {
     /// Tunnel display name, e.g. `http:mysite`.
     tunnel: Mutex<String>,
     streams: DashMap<u64, StreamCapture>,
+    /// 每条流拨向哪个本地地址(replay 用它)。
+    locals: DashMap<u64, SocketAddr>,
     records: Mutex<VecDeque<RequestRecord>>,
     next_id: AtomicU64,
 }
@@ -92,25 +96,22 @@ pub fn init() {
         enabled: AtomicBool::new(false),
         tunnel: Mutex::new(String::new()),
         streams: DashMap::new(),
+        locals: DashMap::new(),
         records: Mutex::new(VecDeque::new()),
         next_id: AtomicU64::new(1),
     });
-    let _ = INFO.set(Mutex::new(AgentInfo::default()));
 }
 
 fn inspector() -> &'static Inspector {
     INSPECTOR.get().expect("inspector not initialized")
 }
 
-/// Enable capture for the current http tunnel (`name` e.g. `http:mysite`).
-/// TCP tunnels keep the inspector disabled (nothing structured to log).
-pub fn enable(name: &str) {
-    let i = inspector();
-    i.enabled.store(true, Ordering::Relaxed);
-    *i.tunnel.lock().unwrap() = name.to_string();
+/// Bytes flowing server -> local (the request direction).
+/// 记下这条流拨向哪个本地地址(replay 需要)。
+pub fn start_stream(stream_id: u64, local: SocketAddr) {
+    inspector().locals.insert(stream_id, local);
 }
 
-/// Bytes flowing server -> local (the request direction).
 pub fn observe_request(stream_id: u64, data: &[u8]) {
     let i = inspector();
     if !i.enabled.load(Ordering::Relaxed) {
@@ -143,7 +144,7 @@ pub fn observe_request(stream_id: u64, data: &[u8]) {
         };
 
         if m.method.is_some() {
-            push_record(i, m); // keep-alive: hand off the previous request
+            push_record(i, stream_id, m); // keep-alive: hand off the previous request
         }
         m.method = Some(method);
         m.path = Some(path);
@@ -186,6 +187,7 @@ pub fn observe_response(stream_id: u64, data: &[u8]) {
 /// stream closes.
 pub fn finish_stream(stream_id: u64) {
     let i = inspector();
+    i.locals.remove(&stream_id);
     if !i.enabled.load(Ordering::Relaxed) {
         return;
     }
@@ -193,7 +195,7 @@ pub fn finish_stream(stream_id: u64) {
         return;
     };
     if c.method.is_some() {
-        push_record(i, &mut c);
+        push_record(i, stream_id, &mut c);
     }
 }
 
@@ -218,7 +220,7 @@ impl StreamCapture {
 
 /// Build a record from the current segment and push it to the ring buffer,
 /// then reset the segment state for the next request on this stream.
-fn push_record(i: &Inspector, c: &mut StreamCapture) {
+fn push_record(i: &Inspector, stream_id: u64, c: &mut StreamCapture) {
     let Some(method) = c.method.take() else {
         return;
     };
@@ -227,6 +229,7 @@ fn push_record(i: &Inspector, c: &mut StreamCapture) {
     let id = i.next_id.fetch_add(1, Ordering::Relaxed);
     let record = RequestRecord {
         id,
+        local: i.locals.get(&stream_id).map(|e| *e.value()),
         tunnel: i.tunnel.lock().unwrap().clone(),
         duration_ms: c.seg_started.elapsed().as_millis() as u64,
         method,
@@ -306,29 +309,6 @@ fn format_timestamp() -> String {
 // Local dashboard HTTP server
 // ---------------------------------------------------------------------------
 
-/// Static facts about this agent run, updated on every (re)connect.
-#[derive(Debug, Clone, Default)]
-pub struct AgentInfo {
-    pub mode: String,       // "http" | "tcp"
-    pub local: String,      // e.g. "127.0.0.1:8000"
-    pub remote: String,     // public entry, e.g. "mysite:8080" / "tcp://host:18008"
-}
-static INFO: OnceLock<Mutex<AgentInfo>> = OnceLock::new();
-
-/// Overwrite the current tunnel facts. Called on every handshake success so a
-/// reconnect (possibly with a new public URL) refreshes the dashboard instead
-/// of leaving the first connection's value pinned forever.
-pub fn set_info(info: AgentInfo) {
-    match INFO.get() {
-        Some(m) => *m.lock().unwrap() = info,
-        None => {
-            let _ = INFO.set(Mutex::new(info));
-        }
-    }
-}
-pub fn info() -> AgentInfo {
-    INFO.get().expect("inspector not initialized").lock().unwrap().clone()
-}
 
 /// The built agent-ui (agent-ui/dist) embedded at compile time.
 #[derive(RustEmbed)]
@@ -341,6 +321,8 @@ struct UiState;
 pub async fn serve_dashboard(addr: SocketAddr) -> anyhow::Result<()> {
     let app = axum::Router::new()
         .route("/api/tunnels", get(api_tunnels))
+        .route("/api/ports", get(api_ports))
+        .route("/api/publish", get(api_publish).put(api_set_publish))
         .route("/api/requests", get(api_requests))
         .route("/api/requests/{id}", get(api_request_detail))
         .route("/api/requests/{id}/replay", post(api_replay))
@@ -353,6 +335,31 @@ pub async fn serve_dashboard(addr: SocketAddr) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// 本机正在监听的端口(启发式 `http_hint`,不是探测结果)。
+async fn api_ports() -> impl IntoResponse {
+    axum::Json(crate::publish::shared().ports())
+}
+
+/// 当前发布配置 + 每条运行状态。
+async fn api_publish() -> impl IntoResponse {
+    axum::Json(crate::publish::shared().status())
+}
+
+/// 覆盖式提交期望状态(UI 的"保存并应用")。
+async fn api_set_publish(
+    axum::Json(entries): axum::Json<Vec<crate::publish::EntryStatus>>,
+) -> impl IntoResponse {
+    let wanted: Vec<crate::publish::Entry> = entries.into_iter().map(|e| e.entry).collect();
+    let shared = crate::publish::shared();
+    if let Some(path) = crate::publish::state_path() {
+        if let Err(e) = crate::publish::save(path, &wanted) {
+            tracing::warn!("cannot persist the publish configuration: {e:#}");
+        }
+    }
+    shared.set_desired(wanted);
+    axum::Json(shared.status())
+}
+
 async fn api_tunnels() -> impl IntoResponse {
     #[derive(Serialize)]
     struct TunnelInfo {
@@ -360,12 +367,16 @@ async fn api_tunnels() -> impl IntoResponse {
         local: String,
         remote: String,
     }
-    let i = info();
-    axum::Json(vec![TunnelInfo {
-        mode: i.mode.clone(),
-        local: i.local.clone(),
-        remote: i.remote.clone(),
-    }])
+    let rows: Vec<TunnelInfo> = crate::publish::shared()
+        .status()
+        .into_iter()
+        .map(|s| TunnelInfo {
+            mode: s.entry.kind().to_string(),
+            local: format!("127.0.0.1:{}", s.entry.local_port()),
+            remote: s.detail.clone().unwrap_or_default(),
+        })
+        .collect();
+    axum::Json(rows)
 }
 
 async fn api_requests() -> impl IntoResponse {
@@ -387,16 +398,17 @@ async fn api_request_detail(UrlPath(id): UrlPath<u64>) -> impl IntoResponse {
 /// and return the fresh response. (Local debugging aid; does not re-enter the
 /// tunnel.)
 async fn api_replay(UrlPath(id): UrlPath<u64>) -> impl IntoResponse {
-    let payload = {
+    let found = {
         let recs = inspector().records.lock().unwrap();
-        recs.iter().find(|r| r.id == id).map(|r| r.payload.clone())
+        recs.iter()
+            .find(|r| r.id == id)
+            .map(|r| (r.local, r.payload.clone()))
     };
-    let Some(payload) = payload else {
+    let Some((local, payload)) = found else {
         return (StatusCode::NOT_FOUND, "request not found").into_response();
     };
-    let local: SocketAddr = match info().local.parse() {
-        Ok(a) => a,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "bad local address").into_response(),
+    let Some(local) = local else {
+        return (StatusCode::GONE, "that stream is no longer active").into_response();
     };
     match tokio::time::timeout(
         std::time::Duration::from_secs(5),

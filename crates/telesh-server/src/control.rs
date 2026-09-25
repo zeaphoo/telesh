@@ -17,11 +17,11 @@ use tracing::{debug, error, info, warn};
 use telesh_protocol::{
     self as proto, decode, encode, login_message, AuthChallenge, AuthError, AuthMethod, AuthOk,
     ClientHello, Frame, LookupHello, P2PAddrResp, P2PAnnounceResp, PublicKey, ServerHello,
-    Signature, TcpRegisterResp, TokenCheckResp,
+    Signature, TokenCheckResp, TunnelKind, TunnelPublish, TunnelResp, TunnelResult,
 };
 
 use crate::config::config;
-use crate::registry::AgentConn;
+use crate::registry::Route;
 use crate::state::registry;
 
 const PING_INTERVAL: Duration = Duration::from_secs(30);
@@ -63,26 +63,17 @@ async fn handle_connection(addr: SocketAddr, mut socket: WebSocket) {
     // self-declared agent_id everywhere downstream.
     let agent_id = crate::db::account_handle(account);
 
-    let (sub_domain, assigned) = match resolve_subdomain(&mut socket, &hello).await {
-        Some(r) => r,
-        None => return,
-    };
+    // 每条控制连接一个 id:重连时新连接可能先注册,旧连接的清理不能删掉新状态。
+    let conn_id = crate::state::next_conn_id();
 
-    // A single channel carries every frame bound for this agent.
+    // A single channel carries every frame bound for this agent. Tunnels are
+    // registered per target *after* login (see `Frame::TunnelPublish`).
     let (tx, mut rx) = mpsc::unbounded_channel::<Frame>();
-    if !reg.insert(&agent_id, &sub_domain, tx.clone()) {
-        warn!(agent_id = %agent_id, sub_domain, "subdomain already in use");
-        let _ = send(&mut socket, &Frame::ServerHello(ServerHello::SubDomainInUse)).await;
-        return;
-    }
-    debug!(agent_id = %agent_id, sub_domain, "agent registered");
+    reg.insert_agent(&agent_id, conn_id);
 
-    let hostname = public_hostname(&sub_domain);
     if let Err(e) = send(
         &mut socket,
         &Frame::ServerHello(ServerHello::Success {
-            sub_domain: sub_domain.clone(),
-            hostname,
             agent_id: agent_id.clone(),
             relay_url: crate::state::relay_url(),
             data_addr: crate::state::data_addr(),
@@ -91,7 +82,7 @@ async fn handle_connection(addr: SocketAddr, mut socket: WebSocket) {
     .await
     {
         debug!("failed to send server hello: {e}");
-        reg.remove(&agent_id);
+        reg.remove(&agent_id, conn_id);
         return;
     }
 
@@ -114,7 +105,7 @@ async fn handle_connection(addr: SocketAddr, mut socket: WebSocket) {
                 break;
             }
         }
-        reg_clone.remove(&agent_id_for_sink);
+        reg_clone.remove(&agent_id_for_sink, conn_id);
     });
 
     // Keepalive pings: keep NAT/proxy idle timeouts from killing the channel.
@@ -141,7 +132,7 @@ async fn handle_connection(addr: SocketAddr, mut socket: WebSocket) {
             }
             Ok(Some(Ok(msg @ Message::Text(_)))) => match parse_message(msg) {
                 Ok(frame) => {
-                    if let Err(e) = dispatch(&tx, &agent_id, frame).await {
+                    if let Err(e) = dispatch(&tx, &agent_id, conn_id, frame).await {
                         debug!("frame dispatch error: {e}");
                     }
                 }
@@ -162,12 +153,10 @@ async fn handle_connection(addr: SocketAddr, mut socket: WebSocket) {
     }
 
     let _ = tx.send(Frame::Ping); // nudge the sink task to notice the closed ws
-    reg.remove(&agent_id);
-    crate::tcp::unregister_all(&agent_id);
-    crate::state::p2p_remove_account(&agent_id);
-    info!(agent_id = %agent_id, sub_domain, %addr, "agent disconnected");
-
-    let _ = assigned;
+    reg.remove(&agent_id, conn_id);
+    crate::tcp::unregister_all(&agent_id, conn_id);
+    crate::state::p2p_remove_account(&agent_id, conn_id);
+    info!(agent_id = %agent_id, %addr, "agent disconnected");
 }
 
 /// The first frame on a control connection, which sets the connection's role.
@@ -408,8 +397,6 @@ async fn handle_lookup(addr: SocketAddr, mut socket: WebSocket, hello: LookupHel
     if send(
         &mut socket,
         &Frame::ServerHello(ServerHello::Success {
-            sub_domain: String::new(),
-            hostname: String::new(),
             agent_id: hello.agent_id.clone(),
             relay_url: crate::state::relay_url(),
             data_addr: crate::state::data_addr(),
@@ -497,19 +484,39 @@ async fn lookup_p2p(account: &str, name: &str) -> P2PAddrResp {
     }
 }
 
-/// Resolve the subdomain: requested (validated) or randomly assigned.
-/// Returns `(sub_domain, assigned_randomly)`.
-async fn resolve_subdomain(
-    socket: &mut WebSocket,
-    hello: &ClientHello,
-) -> Option<(String, bool)> {
-    match hello.sub_domain.clone() {
-        Some(s) if proto::validate_subdomain(&s) => Some((s, false)),
-        Some(_) => {
-            let _ = send(socket, &Frame::ServerHello(ServerHello::InvalidSubDomain)).await;
-            None
+/// 发布一条 HTTP 隧道:把一个本地目标挂到子域上。
+async fn register_http(agent_id: &str, conn_id: u64, req: &TunnelPublish) -> TunnelResult {
+    let sub_domain = match req.name.as_deref() {
+        Some(s) if proto::validate_subdomain(s) => s.to_string(),
+        Some(_) => return TunnelResult::Invalid,
+        None => proto::random_subdomain(),
+    };
+    let route = Route {
+        agent_id: agent_id.to_string(),
+        conn_id,
+        target: req.target.clone(),
+    };
+    if !registry().add_route(&sub_domain, route) {
+        return TunnelResult::NameTaken;
+    }
+    let hostname = public_hostname(&sub_domain);
+    info!(agent_id, %sub_domain, target = %req.target, "http tunnel registered");
+    TunnelResult::Http {
+        sub_domain,
+        hostname,
+    }
+}
+
+/// 发布一条裸 TCP 隧道:分配一个公网端口。
+async fn register_tcp(agent_id: &str, conn_id: u64, req: &TunnelPublish) -> TunnelResult {
+    match crate::tcp::register(agent_id, conn_id, &req.target, req.remote_port).await {
+        Ok(port) => {
+            info!(agent_id, port, target = %req.target, "tcp tunnel registered");
+            TunnelResult::Tcp { port }
         }
-        None => Some((proto::random_subdomain(), true)),
+        Err(crate::tcp::TcpError::InUse) => TunnelResult::NameTaken,
+        Err(crate::tcp::TcpError::OutOfRange) => TunnelResult::Invalid,
+        Err(e) => TunnelResult::Error(e.to_string()),
     }
 }
 
@@ -526,26 +533,35 @@ fn public_hostname(sub_domain: &str) -> String {
 async fn dispatch(
     tx: &UnboundedSender<Frame>,
     agent_id: &str,
+    conn_id: u64,
     frame: Frame,
 ) -> anyhow::Result<()> {
     match frame {
-        // Raw-TCP tunnel registration: allocate a public port and reply.
-        Frame::TcpRegister(req) => {
-            let client = AgentConn {
-                agent_id: agent_id.to_string(),
-                sub_domain: String::new(),
-                tx: tx.clone(),
-                connected_at: std::time::Instant::now(),
+        // Multi-tunnel: publish one tunnel (HTTP or TCP); P2P uses `P2PAnnounce`.
+        Frame::TunnelPublish(req) => {
+            let result = match req.kind {
+                TunnelKind::Http => register_http(agent_id, conn_id, &req).await,
+                TunnelKind::Tcp => register_tcp(agent_id, conn_id, &req).await,
+                TunnelKind::P2p => TunnelResult::Error("p2p tunnels use p2p_announce".into()),
             };
-            let resp = match crate::tcp::register(client, req.requested_port).await {
-                Ok(port) => TcpRegisterResp::Success { port },
-                Err(crate::tcp::TcpError::InUse) => TcpRegisterResp::PortInUse,
-                Err(crate::tcp::TcpError::OutOfRange) => TcpRegisterResp::InvalidPort,
-                Err(e) => TcpRegisterResp::Error(e.to_string()),
-            };
-            let _ = tx.send(Frame::TcpRegisterResp(resp));
+            let _ = tx.send(Frame::TunnelResp(TunnelResp { id: req.id, result }));
         }
-        Frame::TcpRegisterResp(_) => debug!("unexpected TcpRegisterResp from agent"),
+        Frame::TunnelResp(_) => debug!("unexpected TunnelResp from agent"),
+        // Unpublish a tunnel.
+        Frame::TunnelClose(close) => match close.kind {
+            TunnelKind::Http => {
+                registry().remove_route(&close.key, conn_id);
+                info!(agent_id, sub_domain = %close.key, "http tunnel closed");
+            }
+            TunnelKind::Tcp => {
+                crate::tcp::unregister(&close.key, conn_id);
+                info!(agent_id, port = %close.key, "tcp tunnel closed");
+            }
+            TunnelKind::P2p => {
+                crate::state::p2p_remove_name(agent_id, &close.key, conn_id);
+                info!(agent_id, name = %close.key, "p2p service closed");
+            }
+        },
         // P2P directory: store a service's iroh address, or answer a lookup.
         Frame::P2PAnnounce(a) => {
             let name = a.name.clone();
@@ -560,6 +576,7 @@ async fn dispatch(
                 let entry = crate::state::P2pEntry {
                     account: account.clone(),
                     name: name.clone(),
+                    conn_id,
                     endpoint_id: addr.id,
                     announce: a,
                 };

@@ -4,6 +4,7 @@
 //! self-hosted topology. A multi-instance edge would swap these for a
 //! distributed registry + gossip later.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 use anyhow::Result;
@@ -29,6 +30,8 @@ pub static REGISTRY: OnceLock<Registry> = OnceLock::new();
 pub struct P2pEntry {
     pub account: String,
     pub name: String,
+    /// 注册它的那条控制连接:重连时旧连接的清理不能删掉新连接的条目。
+    pub conn_id: u64,
     pub endpoint_id: EndpointId,
     pub announce: P2PAnnounce,
 }
@@ -56,6 +59,15 @@ pub static RELAY_URL: OnceLock<Option<String>> = OnceLock::new();
 /// Data-plane address announced to agents after login (the agent-initiated
 /// yamux endpoint). `None` means no data plane.
 pub static DATA_ADDR: OnceLock<Option<String>> = OnceLock::new();
+
+static NEXT_CONN_ID: OnceLock<AtomicU64> = OnceLock::new();
+
+/// 每条控制连接一个递增 id,用来区分重连前后两条连接的清理。
+pub fn next_conn_id() -> u64 {
+    NEXT_CONN_ID
+        .get_or_init(|| AtomicU64::new(1))
+        .fetch_add(1, Ordering::Relaxed)
+}
 
 /// Accounts / keys / sessions.
 pub static DB: OnceLock<SqlitePool> = OnceLock::new();
@@ -199,12 +211,20 @@ pub fn data_addr() -> Option<String> {
     DATA_ADDR.get().cloned().flatten()
 }
 
+/// Drop one P2P service (agent unpublished it).
+pub fn p2p_remove_name(account: &str, name: &str, conn_id: u64) {
+    let key = format!("{account}/{name}");
+    if p2p_dir().get(&key).is_some_and(|e| e.conn_id == conn_id) {
+        p2p_dir().remove(&key);
+    }
+}
+
 /// Drop every P2P service owned by `account` (called when the agent's control
 /// connection ends, so stale addresses do not linger in the directory).
-pub fn p2p_remove_account(account: &str) {
+pub fn p2p_remove_account(account: &str, conn_id: u64) {
     let keys: Vec<String> = p2p_dir()
         .iter()
-        .filter(|e| e.value().account == account)
+        .filter(|e| e.value().account == account && e.value().conn_id == conn_id)
         .map(|e| e.key().clone())
         .collect();
     for key in keys {

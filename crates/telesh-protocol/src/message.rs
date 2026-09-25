@@ -157,25 +157,12 @@ pub mod endpoint_addr {
 // 消息结构
 // ---------------------------------------------------------------------------
 
-/// Agent → server:申请一个公网 TCP 端口(SSH / NAS / 裸 TCP)。
+/// Agent → server:取消一条已发布的隧道。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TcpRegister {
-    /// 期望端口;`None` 表示让服务端挑一个。
-    pub requested_port: Option<u16>,
-}
-
-/// [`TcpRegister`] 的结果。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TcpRegisterResp {
-    Success {
-        /// 服务端分配的公网 TCP 端口。
-        port: u16,
-    },
-    PortInUse,
-    /// 端口不在服务端配置的范围内。
-    InvalidPort,
-    Error(String),
+pub struct TunnelClose {
+    pub kind: TunnelKind,
+    /// `http`:子域;`tcp`:公网端口(十进制字符串);`p2p`:服务名。
+    pub key: String,
 }
 
 /// 客户端类型。
@@ -364,8 +351,6 @@ pub struct ClientHello {
     pub session: Option<Vec<u8>>,
     /// 服务端配置了注册密钥时,首次注册必须带上。
     pub enrollment: Option<String>,
-    /// 请求的子域(仅 agent);`None` 表示由服务端分配。
-    pub sub_domain: Option<String>,
     /// 友好节点名。
     pub display_name: Option<String>,
 }
@@ -375,17 +360,13 @@ pub struct ClientHello {
 #[serde(rename_all = "snake_case")]
 pub enum ServerHello {
     Success {
-        sub_domain: String,
-        /// 隧道的公网主机名,如 `<sub>.<public-host>`。
-        hostname: String,
+        /// 9 位账户句柄(连接级身份;隧道级信息在各自的注册回复里)。
         agent_id: String,
         /// 客户端该用的 iroh relay(服务端下发);`None` 表示用 iroh 默认(n0)。
         relay_url: Option<String>,
         /// 数据面地址 `<host>:<port>`;`None` 表示服务端没有数据面。
         data_addr: Option<String>,
     },
-    SubDomainInUse,
-    InvalidSubDomain,
     AuthFailed,
     Error(String),
 }
@@ -408,6 +389,51 @@ impl ServerHello {
     }
 }
 
+/// 隧道类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TunnelKind {
+    Http,
+    Tcp,
+    P2p,
+}
+
+/// Agent → server:发布一条隧道。
+///
+/// `id` 由 agent 生成,响应原样带回 —— 多隧道可以并发注册,不用靠顺序配对。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TunnelPublish {
+    pub id: u64,
+    pub kind: TunnelKind,
+    /// agent 侧的目标标识(本地端口),服务端只存不解释,开流时原样回传。
+    pub target: String,
+    /// `http`:期望子域;`p2p`:服务名;`tcp`:未用。
+    pub name: Option<String>,
+    /// `tcp`:期望公网端口;其余未用。
+    pub remote_port: Option<u16>,
+}
+
+/// [`TunnelPublish`] 的结果。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TunnelResult {
+    Http { sub_domain: String, hostname: String },
+    Tcp { port: u16 },
+    /// 子域 / 服务名 / 端口被占用。
+    NameTaken,
+    /// 名字或端口不合法。
+    Invalid,
+    Error(String),
+}
+
+/// Server → agent:某条发布请求的结果(按 `id` 配对)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TunnelResp {
+    pub id: u64,
+    #[serde(flatten)]
+    pub result: TunnelResult,
+}
+
 /// 线上控制消息。信封是 serde 的 adjacent tagging:
 /// `{"type": "hello", "data": {...}}`。见 `docs/design-control.md` §2。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -417,8 +443,6 @@ pub enum Frame {
     ServerHello(ServerHello),
     Ping,
     Pong,
-    TcpRegister(TcpRegister),
-    TcpRegisterResp(TcpRegisterResp),
     P2PAnnounce(P2PAnnounce),
     P2PAnnounceResp(P2PAnnounceResp),
     P2PLookup(P2PLookup),
@@ -433,6 +457,10 @@ pub enum Frame {
     AuthError(AuthError),
     TokenCheck(TokenCheck),
     TokenCheckResp(TokenCheckResp),
+    /// 多隧道:发布 / 结果 / 取消。
+    TunnelPublish(TunnelPublish),
+    TunnelResp(TunnelResp),
+    TunnelClose(TunnelClose),
 }
 
 /// 随机子域(`[a-z0-9]`)。

@@ -14,13 +14,14 @@ use tracing::{debug, info, warn};
 
 use crate::config::config;
 use crate::ingress;
-use crate::registry::AgentConn;
+use crate::registry::Route;
 
 /// One managed TCP tunnel: a bound public port whose accept loop feeds
 /// streams to `client`.
 pub struct ManagedTunnel {
     pub port: u16,
-    pub client: AgentConn,
+    /// 这条公网端口路由到哪个 agent 的哪个本地目标。
+    pub route: Route,
     accept_task: JoinHandle<()>,
 }
 
@@ -48,8 +49,13 @@ fn tunnels() -> &'static DashMap<u16, ManagedTunnel> {
     TCP_TUNNELS.get_or_init(DashMap::new)
 }
 
-/// Allocate and lazily bind a port for `client`. Returns the public port.
-pub async fn register(client: AgentConn, requested: Option<u16>) -> Result<u16, TcpError> {
+/// Allocate and lazily bind a port for `agent_id`'s `target`. Returns the public port.
+pub async fn register(
+    agent_id: &str,
+    conn_id: u64,
+    target: &str,
+    requested: Option<u16>,
+) -> Result<u16, TcpError> {
     let active = tunnels();
     let range = config().tcp_port_range;
 
@@ -90,12 +96,17 @@ pub async fn register(client: AgentConn, requested: Option<u16>) -> Result<u16, 
         .map_err(TcpError::Bind)?
         .port();
 
-    let accept_task = tokio::spawn(accept_loop(listener, port, client.clone()));
+    let route = Route {
+        agent_id: agent_id.to_string(),
+        conn_id,
+        target: target.to_string(),
+    };
+    let accept_task = tokio::spawn(accept_loop(listener, port, route.clone()));
     tunnels().insert(
         port,
         ManagedTunnel {
             port,
-            client,
+            route,
             accept_task,
         },
     );
@@ -105,13 +116,31 @@ pub async fn register(client: AgentConn, requested: Option<u16>) -> Result<u16, 
 }
 
 /// Stop and release all TCP tunnels owned by `agent_id` (agent disconnect).
-pub fn unregister_all(agent_id: &str) {
+pub fn unregister_all(agent_id: &str, conn_id: u64) {
     let ports: Vec<u16> = tunnels()
         .iter()
-        .filter(|t| t.client.agent_id == agent_id)
+        .filter(|t| t.route.agent_id == agent_id && t.route.conn_id == conn_id)
         .map(|t| t.port)
         .collect();
     for port in ports {
+        if let Some((_, t)) = tunnels().remove(&port) {
+            t.accept_task.abort();
+            crate::metrics::dec_tcp_tunnels();
+            debug!(port, "tcp tunnel released");
+        }
+    }
+}
+
+/// Release one public port (only if `agent_id` still owns it).
+pub fn unregister(key: &str, conn_id: u64) {
+    let Ok(port) = key.parse::<u16>() else {
+        warn!(key, "tunnel_close with a non-numeric tcp key");
+        return;
+    };
+    let owned = tunnels()
+        .get(&port)
+        .is_some_and(|t| t.route.conn_id == conn_id);
+    if owned {
         if let Some((_, t)) = tunnels().remove(&port) {
             t.accept_task.abort();
             crate::metrics::dec_tcp_tunnels();
@@ -132,7 +161,7 @@ pub fn list_tunnels() -> Vec<TcpTunnelView> {
         .iter()
         .map(|t| TcpTunnelView {
             port: t.value().port,
-            agent_id: t.value().client.agent_id.clone(),
+            agent_id: t.value().route.agent_id.clone(),
         })
         .collect()
 }
@@ -149,15 +178,15 @@ fn classify_bind(e: &std::io::Error) -> TcpError {
     }
 }
 
-async fn accept_loop(listener: TcpListener, port: u16, client: AgentConn) {
+async fn accept_loop(listener: TcpListener, port: u16, route: Route) {
     loop {
         match listener.accept().await {
             Ok((socket, peer)) => {
                 debug!(%peer, port, "tcp tunnel connection");
-                let client = client.clone();
+                let route = route.clone();
                 let key = format!("tcp:{port}");
                 tokio::spawn(async move {
-                    ingress::open_stream(client, socket, key).await;
+                    ingress::open_stream(socket, &route.agent_id, &route.target, key).await;
                 });
             }
             Err(e) => {
