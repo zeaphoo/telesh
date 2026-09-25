@@ -31,7 +31,10 @@ pub struct Login {
     pub display_name: String,
 }
 
-/// Log in over `ws`; returns the login result and the tunnel `ServerHello`.
+/// Log in over `ws`; returns the login result and the `ServerHello`.
+///
+/// `kind` 是这条连接的角色:`Agent`(发布隧道)或 `Lookup`(只查 P2P 目录)。
+/// 两者用同一套认证:密钥对挑战-应答,或本地缓存的 session。
 ///
 /// The caller keeps ownership of `ws` (it is only borrowed) so it can split it
 /// afterwards for the normal frame pump.
@@ -39,16 +42,15 @@ pub async fn login(
     ws: &mut WsStream,
     secret_key: &[u8; 32],
     session: Option<Vec<u8>>,
-    enrollment: Option<&str>,
+    kind: ClientKind,
     display_name: Option<String>,
 ) -> Result<(Login, ServerHello)> {
     let sk = SecretKey::from_bytes(secret_key);
     let hello = ClientHello {
-        client_kind: ClientKind::Agent,
+        client_kind: kind,
         method: AuthMethod::Keypair,
         public_key: Some(*sk.public().as_bytes()),
         session,
-        enrollment: enrollment.map(str::to_string),
         display_name,
     };
     ws.send(WsMessage::Text(encode(&Frame::Hello(hello))?))
@@ -86,11 +88,8 @@ pub async fn login(
             }
             Frame::AuthError(err) => bail!("login rejected: {err:?}"),
             Frame::ServerHello(hello) => {
-                match &hello {
-                    ServerHello::AuthFailed | ServerHello::Error(_) => {
-                        bail!("server rejected the connection: {hello:?}")
-                    }
-                    ServerHello::Success { .. } => {}
+                if let ServerHello::Error(e) = &hello {
+                    bail!("server rejected the connection: {e}");
                 }
                 server_hello = Some(hello);
             }

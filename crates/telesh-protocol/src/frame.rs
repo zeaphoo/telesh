@@ -67,7 +67,6 @@ mod tests {
                 method: AuthMethod::Keypair,
                 public_key: Some([7u8; 32]),
                 session: Some(vec![1, 2, 3, 4]),
-                enrollment: Some("enroll".into()),
                 display_name: Some("Calm Otter".into()),
             }),
             Frame::AuthOk(AuthOk {

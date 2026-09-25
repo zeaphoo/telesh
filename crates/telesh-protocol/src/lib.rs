@@ -15,7 +15,7 @@ pub use frame::{decode, encode, CodecError};
 pub use iroh_base::{EndpointAddr, EndpointId, PublicKey, Signature};
 pub use message::{
     login_message, random_subdomain, validate_subdomain, AuthChallenge, AuthError, AuthMethod,
-    AuthOk, AuthResponse, ClientHello, ClientKind, Frame, LookupHello, P2PAddrResp, P2PAnnounce,
+    AuthOk, AuthResponse, ClientHello, ClientKind, Frame, P2PAddrResp, P2PAnnounce,
     P2PAnnounceResp, P2PLookup, ServerHello, TcpMapped, TokenCheck, TokenCheckResp, TrafficReport,
     TunnelClose, TunnelKind, TunnelPublish, TunnelResp, TunnelResult, LOGIN_DOMAIN,
     MAX_MESSAGE_BYTES, SUBDOMAIN_LEN,

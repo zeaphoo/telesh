@@ -32,7 +32,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tracing::{debug, info, warn};
 
 use telesh_protocol::{
-    decode, encode, Frame, LookupHello, P2PAddrResp, P2PLookup, ServerHello, TrafficReport,
+    decode, encode, ClientKind, Frame, P2PAddrResp, P2PLookup, ServerHello, TrafficReport,
     STREAM_ACK_ERR, STREAM_ACK_OK,
 };
 
@@ -89,6 +89,15 @@ pub(crate) fn drain_traffic() -> Vec<TrafficReport> {
     out
 }
 
+/// 镜像那条 lookup 连接用的身份:和 agent 自己登录用的是同一份,所以 peer 不需要
+/// 任何单独配置的密钥。
+#[derive(Debug, Clone)]
+pub struct PeerAuth {
+    pub secret_key: [u8; 32],
+    pub session: Option<Vec<u8>>,
+    pub display_name: Option<String>,
+}
+
 /// Parameters for mirroring a remote service onto a local port.
 #[derive(Debug, Clone)]
 pub struct ConnectOptions {
@@ -99,7 +108,8 @@ pub struct ConnectOptions {
     pub name: String,
     /// Address the local mirror listens on.
     pub local: SocketAddr,
-    pub secret: Option<String>,
+    /// 镜像那条 lookup 连接用的身份。
+    pub auth: PeerAuth,
     pub no_portmap: bool,
     /// How long to hold an accepted local connection while the P2P link
     /// recovers, retrying the stream setup (never after payload flows).
@@ -125,7 +135,9 @@ pub async fn run_connect(opts: &ConnectOptions) -> Result<()> {
         opts.control_addr.clone(),
         opts.account.clone(),
         opts.name.clone(),
-        opts.secret.clone(),
+        opts.auth.secret_key,
+        opts.auth.session.clone(),
+        opts.auth.display_name.clone(),
         info_tx,
         relay_tx,
     ));
@@ -170,11 +182,10 @@ pub async fn run_connect(opts: &ConnectOptions) -> Result<()> {
                 };
                 let mut conn_rx = conn_rx.clone();
                 let info_rx = info_rx.clone();
-                let secret = opts.secret.clone();
                 let service = format!("{}/{}", opts.account, opts.name);
                 let retry_wait = opts.retry_wait;
                 tokio::spawn(async move {
-                    match attach(sock, &mut conn_rx, &info_rx, secret, service, retry_wait).await {
+                    match attach(sock, &mut conn_rx, &info_rx, service, retry_wait).await {
                         AttachOutcome::Attached => {}
                         AttachOutcome::Refused => {
                             debug!(%peer, "local connection refused by agent")
@@ -263,11 +274,14 @@ async fn supervisor(
 
 /// Subscribe to a service and feed its address (and later updates) to the
 /// supervisor. Keeping this connection open is what makes re-lookup unnecessary.
+#[allow(clippy::too_many_arguments)]
 async fn subscribe(
     control_addr: String,
     account: String,
     name: String,
-    secret: Option<String>,
+    secret_key: [u8; 32],
+    session: Option<Vec<u8>>,
+    display_name: Option<String>,
     info_tx: watch::Sender<Option<ServiceInfo>>,
     relay_tx: tokio::sync::oneshot::Sender<Option<String>>,
 ) -> Result<()> {
@@ -276,26 +290,13 @@ async fn subscribe(
         .await
         .with_context(|| format!("failed to connect to control server at {url}"))?;
 
-    // A lookup-only peer registers no tunnel on the server.
-    let hello = LookupHello {
-        agent_id: format!("peer-{}", random_id(12)),
-        auth_key: secret,
-    };
-    ws.send(ws_text(&Frame::Lookup(hello))?).await?;
-    let relay = loop {
-        match ws.next().await {
-            Some(Ok(WsMessage::Text(text))) => match decode(&text)? {
-                Frame::ServerHello(hello @ ServerHello::Success { .. }) => {
-                    break hello.relay_url().map(str::to_string)
-                }
-                Frame::ServerHello(other) => bail!("control server rejected peer: {other:?}"),
-                Frame::Ping => ws.send(ws_text(&Frame::Pong)?).await?,
-                _ => {}
-            },
-            Some(Ok(_)) => {}
-            Some(Err(e)) => bail!("control connection error during handshake: {e}"),
-            None => bail!("control connection closed during handshake"),
-        }
+    // 镜像这条连接用 agent 自己的身份登录(角色 Lookup),服务端按登录后的
+    // session 授权查询,不需要任何单独配置的密钥。
+    let (_login, hello) =
+        crate::auth::login(&mut ws, &secret_key, session, ClientKind::Lookup, display_name).await?;
+    let relay = match hello {
+        ServerHello::Success { relay_url, .. } => relay_url,
+        other => bail!("control server rejected peer: {other:?}"),
     };
     // Hand the announced relay to `run_connect` before entering the long-lived
     // push loop.
@@ -399,12 +400,10 @@ pub(crate) async fn build_endpoint(
 pub(crate) async fn serve_endpoint(
     endpoint: Endpoint,
     targets: Arc<dashmap::DashMap<String, SocketAddr>>,
-    secret: Option<String>,
     account: Option<String>,
 ) {
     while let Some(incoming) = endpoint.accept().await {
         let targets = targets.clone();
-        let secret = secret.clone();
         let account = account.clone();
         tokio::spawn(async move {
             let conn = match incoming.await {
@@ -427,11 +426,10 @@ pub(crate) async fn serve_endpoint(
                     }
                 };
                 let targets = targets.clone();
-                let secret = secret.clone();
                 let account = account.clone();
                 let grants = grants.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = serve_stream(targets, secret, account, grants, send, recv).await {
+                    if let Err(e) = serve_stream(targets, account, grants, send, recv).await {
                         debug!("p2p stream ended: {e:#}");
                     }
                 });
@@ -443,7 +441,6 @@ pub(crate) async fn serve_endpoint(
 /// Authenticate a peer, resolve the named service, then pump both ways.
 async fn serve_stream(
     targets: Arc<dashmap::DashMap<String, SocketAddr>>,
-    secret: Option<String>,
     account: Option<String>,
     grants: Arc<Mutex<HashMap<String, u64>>>,
     mut send: SendStream,
@@ -451,7 +448,7 @@ async fn serve_stream(
 ) -> Result<()> {
     // Every path answers with a one-byte ack, so the dialer can tell a
     // definitive refusal (do not retry) from a dead link (safe to retry).
-    let preamble = match read_handshake(&mut recv, secret.as_deref()).await? {
+    let preamble = match read_handshake(&mut recv).await? {
         Some(preamble) => preamble,
         None => {
             warn!("peer rejected: bad or missing credential");
@@ -480,10 +477,9 @@ async fn serve_stream(
             return Ok(());
         }
     }
-    // An opaque token is only trusted after the server (which owns the store)
-    // confirms it for this `account/name`. The grant is cached for the rest of
-    // the iroh connection, so only the first stream pays the round-trip.
-    if !service.is_empty() {
+    // 令牌只能由服务端(令牌的唯一持有者)判定。授权在这条 iroh 连接上缓存,
+    // 所以只有第一条流要付一次往返。
+    {
         let now = now_secs();
         let cached = grants
             .lock()
@@ -494,8 +490,8 @@ async fn serve_stream(
             > now;
         if cached {
             debug!(%service, "reusing cached grant for this connection");
-        } else if let Some(token) = preamble.token {
-            match crate::token_check::check(acct, name, token).await {
+        } else {
+            match crate::token_check::check(acct, name, preamble.token).await {
                 Some(expires_at) => {
                     grants.lock().unwrap().insert(service.clone(), expires_at);
                 }
@@ -552,7 +548,6 @@ async fn attach(
     sock: TcpStream,
     conn_rx: &mut watch::Receiver<Option<Connection>>,
     info_rx: &watch::Receiver<Option<ServiceInfo>>,
-    secret: Option<String>,
     service: String,
     window: Duration,
 ) -> AttachOutcome {
@@ -564,10 +559,11 @@ async fn attach(
         match conn.open_bi().await {
             Ok((mut send, mut recv)) => {
                 // Use the newest token; it is refreshed independently of the link.
-                let token = info_rx.borrow().as_ref().and_then(|i| i.token.clone());
-                if let Err(e) =
-                    write_handshake(&mut send, secret.as_deref(), &service, token.as_deref()).await
-                {
+                // 没有令牌就没法证明这次访问被授权,直接当明确拒绝。
+                let Some(token) = info_rx.borrow().as_ref().and_then(|i| i.token.clone()) else {
+                    return AttachOutcome::Refused;
+                };
+                if let Err(e) = write_handshake(&mut send, &service, &token).await {
                     debug!("p2p preamble failed, retrying before any payload: {e:#}");
                 } else {
                     // Wait for the agent to confirm it attached the local service.
@@ -638,77 +634,49 @@ async fn pump(tcp: TcpStream, mut send: SendStream, mut recv: RecvStream) -> (u6
     (up.unwrap_or(0), down.unwrap_or(0))
 }
 
-/// Credential kinds for the stream preamble.
-const CRED_SECRET: u8 = 0;
+/// 流前导的凭证类型。只有一种:服务端签发的访问令牌。
 const CRED_TOKEN: u8 = 1;
 
 /// A dialer's stream preamble: a credential plus the requested service.
 struct Preamble {
-    /// Opaque access token (kind 1).
-    token: Option<Vec<u8>>,
+    /// 服务端签发的访问令牌。
+    token: Vec<u8>,
     /// `"<account>/<name>"`。
     service: String,
 }
 
-/// Dialer -> acceptor stream preamble.
+/// 拨号方 → 接受方:`[1][u16 token_len][token][u16 service_len][service]`。
 ///
-/// Kind 0 (shared secret): `[0][u16 secret_len][secret][u16 service_len][service]`.
-/// Kind 1 (access token):  `[1][u16 token_len][token][u16 service_len][service]`.
-async fn write_handshake(
-    send: &mut SendStream,
-    secret: Option<&str>,
-    service: &str,
-    token: Option<&[u8]>,
-) -> Result<()> {
+/// 只有一种凭证:服务端为这次访问签发的短期令牌。令牌由接受方拿去问服务端
+/// 校验(见 `crate::token_check`);共享密钥那条(原来的 kind 0)已经删掉。
+async fn write_handshake(send: &mut SendStream, service: &str, token: &[u8]) -> Result<()> {
     if service.len() > MAX_PRELUDE {
         bail!("service name too long ({} bytes)", service.len());
     }
-    match token {
-        Some(token) => {
-            if token.len() > MAX_PRELUDE {
-                bail!("token too long ({} bytes)", token.len());
-            }
-            send.write_all(&[CRED_TOKEN]).await?;
-            send.write_all(&(token.len() as u16).to_be_bytes()).await?;
-            send.write_all(token).await?;
-        }
-        None => {
-            let secret = secret.unwrap_or("").as_bytes();
-            if secret.len() > MAX_PRELUDE {
-                bail!("auth key too long ({} bytes)", secret.len());
-            }
-            send.write_all(&[CRED_SECRET]).await?;
-            send.write_all(&(secret.len() as u16).to_be_bytes()).await?;
-            send.write_all(secret).await?;
-        }
+    if token.len() > MAX_PRELUDE {
+        bail!("token too long ({} bytes)", token.len());
     }
+    send.write_all(&[CRED_TOKEN]).await?;
+    send.write_all(&(token.len() as u16).to_be_bytes()).await?;
+    send.write_all(token).await?;
     send.write_all(&(service.len() as u16).to_be_bytes()).await?;
     send.write_all(service.as_bytes()).await?;
     Ok(())
 }
 
-/// Acceptor side of [`write_handshake`]. `None` means a rejected credential.
-///
-/// A kind-0 secret is checked here; a kind-1 token is **not** — the caller asks
-/// the server to validate it (see `crate::token_check`).
-async fn read_handshake(recv: &mut RecvStream, secret: Option<&str>) -> Result<Option<Preamble>> {
+/// [`write_handshake`] 的接受方。`Ok(None)` 表示凭证不被接受(回
+/// `STREAM_ACK_ERR`);令牌本身不在这里校验,交给调用方问服务端。
+async fn read_handshake(recv: &mut RecvStream) -> Result<Option<Preamble>> {
     let mut kind = [0u8; 1];
     recv.read_exact(&mut kind)
         .await
         .context("read credential kind")?;
-    let token = match kind[0] {
-        CRED_SECRET => {
-            let presented = read_field(recv).await.context("read auth prelude")?;
-            if let Some(expected) = secret {
-                if !constant_time_eq(&presented, expected.as_bytes()) {
-                    return Ok(None);
-                }
-            }
-            None
-        }
-        CRED_TOKEN => Some(read_field(recv).await.context("read access token")?),
-        other => bail!("unknown credential kind {other}"),
-    };
+    if kind[0] != CRED_TOKEN {
+        // 未知凭证类型:后面的字段布局也不知道,不猜,直接拒绝。
+        debug!(kind = kind[0], "unknown credential kind");
+        return Ok(None);
+    }
+    let token = read_field(recv).await.context("read access token")?;
     let service = read_field(recv).await.context("read service name")?;
     Ok(Some(Preamble {
         token,
@@ -742,24 +710,4 @@ async fn read_field(recv: &mut RecvStream) -> Result<Vec<u8>> {
 /// 一条控制消息 → 一个 JSON text 帧。
 fn ws_text(frame: &Frame) -> Result<WsMessage> {
     Ok(WsMessage::Text(encode(frame)?))
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
-
-fn random_id(len: usize) -> String {
-    use rand::Rng;
-    const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
-    let mut rng = rand::thread_rng();
-    (0..len)
-        .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
-        .collect()
 }

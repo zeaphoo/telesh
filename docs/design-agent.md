@@ -8,8 +8,8 @@
   不会误删重连后新连接的注册。
 - 目标表按"当前已应用的条目"整体重建:同一个本地端口可以同时发布为 HTTP 和 TCP,
   逐条增删会互相误删。
-- 镜像已经搬进 UI;`telesh connect` 子命令已删除。镜像条目带可选的 `secret`
-  (服务端配了 `--lookup-secret` / `--secret` 时,lookup 连接要带它)。
+- 镜像已经搬进 UI;`telesh connect` 子命令已删除。镜像那条 lookup 连接用本机 agent
+  自己的身份登录服务端,不需要额外密钥。
 - HTTP 判定**真的探测**:每个端口一个进程生命周期内探一次(发一次 `HEAD /`,700ms
   超时,8 并发),端口消失后清缓存以便服务重启后重探;没探过时回落到端口表启发式。
 
@@ -37,7 +37,6 @@ telesh <control-server>          # 唯一的必需参数
 | `<control-server>` | 唯一必需参数,控制服务器 `host:port` |
 | `--state-file` | 身份 + 会话(现状保留) |
 | `--dashboard-addr` | 本地 UI 地址,默认 `127.0.0.1:16345` |
-| `--enroll` | 首次注册的 enrollment secret |
 
 进程内同时持有两种角色:
 
@@ -79,11 +78,10 @@ telesh <control-server>          # 唯一的必需参数
   {"kind": "http",   "local_port": 8000, "sub_domain": "app"},
   {"kind": "tcp",    "local_port": 22,   "remote_port": null},
   {"kind": "p2p",    "local_port": 5432, "name": "db"},
-  {"kind": "mirror", "local_port": 18000, "remote": "000012345/web", "secret": "…"}
+  {"kind": "mirror", "local_port": 18000, "remote": "000012345/web"}
 ]
 ```
 
-`mirror.secret` 可选:服务端配了 `--lookup-secret` / `--secret` 时,lookup 连接必须带它。
 
 - `kind` 判别联合;`local_port` 在发布条目里是"要暴露的本地服务",在 mirror 条目里是
   "要绑定的本地监听端口"(字段名已说明含义,避免混淆)。
@@ -219,10 +217,4 @@ iroh:  [kind][u16 cred_len][cred][u16 service_len][service] → [u8 ack]
 
 ## 14. 待定
 
-- **iroh 流的鉴权**:`crates/telesh/src/p2p.rs` 的 `read_handshake` 现在两种凭证都收:
-  kind-1 访问令牌会拿去问服务端(`token_check`),kind-0 共享密钥只在 agent 配了密钥时
-  才比对。agent 侧没配密钥、目标名又恰好是可猜的本地端口,所以任何拿到 agent
-  `EndpointAddr` 的人都能直连它已发布的目标(发布一个 P2P 服务就会公开这个地址)。
-  建议把 kind-0 整个删掉,只留 kind-1 + `token_check`。
 - UI 是否允许非本机访问(目前只 bind `127.0.0.1`,倾向不做)。
-- 服务端配置文件里的 `secret` / `lookup_secret` / `enrollment_secret` 是否可以合并成一个。

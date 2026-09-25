@@ -25,7 +25,6 @@ pub struct Credentials {
     pub control_addr: String,
     pub secret_key: [u8; 32],
     pub session: Option<Vec<u8>>,
-    pub enrollment: Option<String>,
     pub node_name: Option<String>,
     pub state_path: PathBuf,
     pub no_portmap: bool,
@@ -85,7 +84,7 @@ async fn session(creds: &Credentials, shared: &Arc<Shared>) -> Result<()> {
         &mut ws,
         &creds.secret_key,
         creds.session.clone(),
-        creds.enrollment.as_deref(),
+        telesh_protocol::ClientKind::Agent,
         creds.node_name.clone(),
     )
     .await?;
@@ -94,6 +93,12 @@ async fn session(creds: &Credentials, shared: &Arc<Shared>) -> Result<()> {
         warn!("cannot persist session: {e:#}");
     }
     let account = login.account.clone();
+    // 镜像那条 lookup 连接复用本次登录的身份与 session,不再需要单独密钥。
+    let peer_auth = crate::p2p::PeerAuth {
+        secret_key: creds.secret_key,
+        session: Some(login.session.clone()),
+        display_name: Some(login.display_name.clone()),
+    };
 
     shared.set_ports(crate::ports::scan_and_probe().await);
 
@@ -157,7 +162,6 @@ async fn session(creds: &Credentials, shared: &Arc<Shared>) -> Result<()> {
         tokio::spawn(crate::p2p::serve_endpoint(
             e.clone(),
             shared.targets.clone(),
-            None,
             Some(account.clone()),
         ))
     });
@@ -210,7 +214,7 @@ async fn session(creds: &Credentials, shared: &Arc<Shared>) -> Result<()> {
                 None => break Ok(()),
             },
         }
-        reconcile(&mut applied, &tx, shared, &endpoint, &mut next_id).await;
+        reconcile(&mut applied, &tx, shared, &endpoint, &mut next_id, &peer_auth).await;
         publish_status(&applied, shared);
     };
 
@@ -308,6 +312,7 @@ async fn reconcile(
     shared: &Arc<Shared>,
     endpoint: &Option<iroh::Endpoint>,
     next_id: &mut u64,
+    peer_auth: &crate::p2p::PeerAuth,
 ) {
     let desired = shared.desired();
 
@@ -422,11 +427,7 @@ async fn reconcile(
                     task: None,
                 });
             }
-            Entry::Mirror {
-                local_port,
-                remote,
-                secret,
-            } => {
+            Entry::Mirror { local_port, remote } => {
                 let (account_id, name) = match remote.split_once('/') {
                     Some((a, n)) if !a.is_empty() && !n.is_empty() => {
                         (a.to_string(), n.to_string())
@@ -449,7 +450,7 @@ async fn reconcile(
                     account: account_id,
                     name,
                     local: addr,
-                    secret: secret.clone(),
+                    auth: peer_auth.clone(),
                     no_portmap: true,
                     retry_wait: Duration::from_secs(30),
                 };

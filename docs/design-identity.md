@@ -11,7 +11,7 @@ P1 已实现：
   （`crates/telesh-server/src/control.rs`、`crates/telesh/src/auth.rs`）。
 - 随机 9 位数字 `account_id`，逐位生成；在网络上和注册表中它是补零后的句柄
   （例如 `"000012345"`），在下游各处取代自申报的 `agent_id`。
-- 配置字段 `enrollment_secret` 控制首次注册的准入。
+- 新公钥首次登录即建账号并绑定(TOFU);注册策略以后再加开关。
 - 会话令牌：不透明，以 SHA-256 存储，固定 12h TTL；
   由 agent 缓存在 v2 状态文件中，并在重连时出示。
 - 线协议：`Hello` 携带身份/会话，另有
@@ -70,7 +70,7 @@ P3 已实现：
 ```
 agent                                          control server
   │ Hello(ver, client=agent, method=keypair,
-  │       pubkey=EndpointId, session?,enrollment?) ──►│
+  │       pubkey=EndpointId, session?) ──────────────►│
   │                                                   │ session valid? → AuthOk
   │ ◄──────────────── AuthChallenge(nonce, server_id, ts)
   │ sign("telesh-login-v1" ‖ server_id ‖ nonce ‖ ts)
@@ -114,8 +114,6 @@ agent                                          control server
 - 首次成功的密钥对登录会创建账户并绑定该密钥。
 - TOFU 在这里是安全的：没有他人私钥就无法占用其 `EndpointId`，
   因此不存在身份抢注。
-- 可选的 `enrollment_secret` 配置：设置后，首次登录还必须出示它，
-  从而关闭开放注册，同时保持流程自助。
 - schema 支持每个账户多个密钥（多设备 / 轮换）；添加密钥的登录
   流程稍后推出（§13）。
 
@@ -218,10 +216,9 @@ CREATE TABLE services (
 | 配置字段 | 含义 |
 |---|---|
 | `dataroot` | 数据根目录;数据库是 `<dataroot>/server.sqlite` |
-| `enrollment_secret` | 可选;关闭开放注册 |
-| `secret` / `lookup_secret` | 主密钥 / 查询密钥 |
 
-`visitor_secret` 已从数据面退役;主密钥现在只用于控制面登录与查询把关。
+现在没有任何共享密钥类的配置:控制面认证完全基于密钥对 + session。注册策略(是否允许
+匿名建账号、邀请码等)以后再加。
 
 ## 11. 安全
 
@@ -242,7 +239,6 @@ CREATE TABLE services (
 |---|---|
 | `agent_id`（自申报） | 移除；`account_id` 来自登录 |
 | `ClientHello.auth_key` | 挑战-应答 / 会话令牌 |
-| `TELESH_SECRET`（到处共享） | 可选的注册密钥（enrollment） |
 | `name` 目录（全局） | `(account_id, name)` 命名空间化 |
 | HMAC 服务令牌 | Ed25519 服务端签名令牌 |
 | `--state-file` 32 字节 `secret_key` | 不变：agent 的 Ed25519 身份 |
@@ -256,7 +252,7 @@ CREATE TABLE services (
   `allowlist` 授权如何创建（所有者 CLI？dashboard？）。
 - 密钥轮换 / 多设备：向账户添加第二个 `EndpointId`
   （由现有密钥签名）并指定主登录密钥。
-- 注册体验：邀请码 vs. 单个注册密钥（enrollment）。
+- 注册体验：匿名(TOFU) vs. 邀请码 vs. OIDC。
 - `wss://` 与证书处理。
 - 会话是否可以在 12h 上限内刷新（滑动），还是严格
   固定。

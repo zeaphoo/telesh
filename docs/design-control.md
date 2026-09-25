@@ -17,13 +17,13 @@ payload(payload 走 iroh 或数据面,见 `design-p2p.md`、`design-dataplane.md
 | 连接数 | 每个 agent 一条长连接;lookup-only peer 各自一条 |
 | 保活 | server 每 30s 发 `ping`,90s 内没有收到任何帧则断开 |
 | 首帧 | 必须在 10s 内到达 |
-| 角色 | 由**首帧**决定:`hello` → agent;`lookup` → lookup-only peer |
+| 角色 | 由 `hello.client_kind` 决定:`agent` → 发布隧道;`lookup` → 只查目录 |
 
 角色差别:
 
 - **agent**:注册子域 / TCP 端口,可收发隧道与控制消息,连接断开时服务端注销它的一切
   资源(子域、TCP 端口、该账号的 P2P 目录项、数据连接)。
-- **lookup-only peer**(`telesh connect`):不注册任何东西,只发 `p2p_lookup` 并订阅目录
+- **lookup-only peer**(本地 UI 里的镜像):不注册任何东西,只发 `p2p_lookup` 并订阅目录
   更新;服务端不把它写进 registry。
 
 HTTP 传输(可选,未定):同一套消息换成 JSON body,认证用
@@ -77,16 +77,18 @@ HTTP 传输(可选,未定):同一套消息换成 JSON body,认证用
 - 未知**消息类型**默认会报错 → 解码必须宽松:先解成 `serde_json::Value` 看 `type`,或
   给枚举留 catch-all。
 - **未上线,不做版本协商**:不加 `PROTOCOL_VERSION` 之类的字段,也不用在握手时校验
-  版本。`hello` / `lookup` 里不带协议版本号。
+  版本。`hello` 里不带协议版本号。
 
 ## 3. 握手与认证
 
-### 3.1 agent:keypair(默认)
+### 3.1 所有连接:keypair(默认)
+
+agent 和 peer(镜像那条连接)用的是同一套认证,区别只在 `client_kind`。
 
 ```
-agent                                                    control server
-  │ hello{ client_kind:"agent", method:"keypair",
-  │        public_key, session?, enrollment?, display_name? } ──────────────►│
+client                                                   control server
+  │ hello{ client_kind:"agent"|"lookup", method:"keypair",
+  │        public_key, session?, display_name? } ───────────────────────────►│
   │                                                                          │ session 有效 → auth_ok
   │ ◄────────────────────────── auth_challenge{ nonce, server_id, ts } ──────│
   │ sign("telesh-login-v1" ‖ server_id ‖ nonce ‖ ts.to_be_bytes())
@@ -100,8 +102,8 @@ agent                                                    control server
 - 签名载荷是**手工拼接**的,不是 JSON:`b"telesh-login-v1" ‖ server_id(32) ‖
   nonce(32) ‖ ts(u64 大端)`,Ed25519 签 64 字节。域分隔 + `server_id` 防跨服务器重放。
 - `nonce` 服务端随机、单次使用、短 TTL。
-- 首次成功登录建账号并绑定公钥(TOFU)。服务端配置了 `enrollment_secret` 时,首次登录必须
-  同时带 `enrollment`,否则 `auth_error: enrollment_rejected`。
+- 首次成功登录建账号并绑定公钥(TOFU):新公钥第一次登录就直接建账号并绑定。
+  更严的注册策略(邀请码 / OIDC 等)以后再加,现在没有共享密钥这类配置。
 
 ### 3.2 session 快路径
 
@@ -109,25 +111,20 @@ agent                                                    control server
 服务端查库校验,跳过 challenge。浏览器/dashboard 走这条路,不需要持有签名密钥。
 服务端每次登录都会**签发新的 session**(轮换)。
 
-### 3.3 lookup-only peer(`telesh connect`)
+### 3.3 lookup-only peer(镜像)
 
-首帧用 `lookup` 而不是 `hello`:
+peer 发的是同一个 `hello`,只是 `client_kind:"lookup"`:
 
-```
-lookup{ auth_key?, agent_id }        # agent_id 只是日志用的临时标识
-```
-
-- 鉴权独立于账号体系:服务端配置了 `--secret` / `--lookup-secret` 时必须匹配其中之一
-  (`lookup_auth_ok`),两者都没配置则放行。
-- 通过后服务端回 `server_hello.success`(`agent_id` 只是日志用的临时标识),随后它只
-  回答 `p2p_lookup` 和保活。
+- 认证和 agent 完全一样(挑战-应答或 session 快路径),**没有单独的共享密钥**。
+- 登录成功后服务端回 `server_hello.success`,随后这条连接只回答 `p2p_lookup` 和保活;
+  它不注册任何隧道,也不进 agent 表。
+- `server_hello.success.agent_id` 对 peer 就是它自己的账户句柄。
 
 ### 3.4 server_hello
 
 | 变体 | 含义 |
 |---|---|
 | `success` | 握手完成;字段见 §4。**lookup-only 连接也会收到** |
-| `auth_failed` | 鉴权失败(仅 lookup 连接用) |
 | `error(message)` | 其它错误 |
 
 `server_hello` 是**能力下发**的位置:`success.relay_url` 告诉客户端用哪个 iroh relay
@@ -135,8 +132,8 @@ lookup{ auth_key?, agent_id }        # agent_id 只是日志用的临时标识
 
 ### 3.5 auth_error
 
-`bad_signature` / `bad_session` / `session_expired` / `enrollment_required` /
-`enrollment_rejected` / `unsupported_method` / `error(message)`。
+`bad_signature` / `bad_session` / `session_expired` / `unsupported_method` /
+`error(message)`。
 
 ## 4. 消息表
 
@@ -144,13 +141,12 @@ lookup{ auth_key?, agent_id }        # agent_id 只是日志用的临时标识
 
 | `type` | 方向 | 字段 | 用途 |
 |---|---|---|---|
-| `hello` | client → server(首帧) | `client_kind`, `method`, `public_key?`, `session?`, `enrollment?`, `display_name?` | agent 登录(**不再带子域**:隧道级信息在各次发布里) |
+| `hello` | client → server(首帧) | `client_kind`(agent/lookup), `method`, `public_key?`, `session?`, `display_name?` | 登录(**不再带子域**:隧道级信息在各次发布里) |
 | `auth_challenge` | server → client | `nonce`, `server_id`, `ts` | 待签名挑战 |
 | `auth_response` | client → server | `signature`(base64,64B) | 挑战签名 |
 | `auth_ok` | server → client | `account`, `session`(base64), `expires_at`, `display_name` | 登录成功 |
 | `auth_error` | server → client | 见 §3.5 | 登录失败 |
 | `server_hello` | server → client | 见 §3.4 | 握手结果 + 能力下发 |
-| `lookup` | peer → server(首帧) | `auth_key?`, `agent_id` | lookup-only 连接 |
 | `ping` / `pong` | 双向 | 无 | 保活 |
 | `tunnel_publish` | agent → server | `id`, `kind`(http/tcp), `target`, `name?`, `remote_port?` | 发布一条隧道;`id` 由 agent 生成,响应按它配对 |
 | `tunnel_resp` | server → agent | `id` + `http{sub_domain,hostname}` / `tcp{port}` / `name_taken` / `invalid` / `error(msg)` | 发布结果 |
@@ -209,4 +205,4 @@ lookup{ auth_key?, agent_id }        # agent_id 只是日志用的临时标识
 
 - **是否支持 HTTP 传输**(以及认证头如何与 WS 路径共用)。
 - **TLS**:控制面目前是 `ws://`,是公网部署的前置项,但不改消息集。
-- **lookup 连接的鉴权是否并入统一体系**(现在走 `--secret` / `--lookup-secret`)。
+- 注册策略(是否允许匿名建账号、邀请码、OIDC 等)现在还没有开关。

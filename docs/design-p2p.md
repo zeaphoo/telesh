@@ -56,11 +56,12 @@
 每个数据流的头几个字节携带一个凭证以及调用方想要的服务，随后是原始载荷：
 
 ```
-kind 0 (shared secret): [0][u16 secret_len][secret][u16 service_len][service]
-kind 1 (access token) : [1][u16 token_len][token][u16 service_len][service]
+access token: [1][u16 token_len][token][u16 service_len][service]
 ```
 
-接受方自行校验 kind-0 secret；对于 kind-1 token，它会转发给服务端（`TokenCheck`）。然后它把 `service` 解析为本地端口。http/tcp agent 发送空的服务名，因为它们只暴露单个目标。接受方以 `STREAM_ACK_OK`/`STREAM_ACK_ERR` 作为应答。
+只有一种凭证：服务端为这次访问签发的短期令牌。接受方把令牌转发给服务端校验
+（`TokenCheck`），然后把 `service`（`<account>/<name>`）解析成本地端口。接受方以
+`STREAM_ACK_OK`/`STREAM_ACK_ERR` 作为应答。
 
 ## 4b. 多服务暴露
 
@@ -109,13 +110,13 @@ agent 还会额外构建一个 iroh endpoint，使用 `ServerHello::Success` 中
 ## 7. 安全
 
 - iroh 连接是加密的，peer 的 `EndpointId` 由 QUIC/TLS 认证。仅凭 `EndpointId` 并不授予访问权限，因此 agent 会施加应用层检查。
-- **流前导**：拨号方（一个 peer 或服务端边缘）在每个流的头几个字节发送一个带标签的凭证：
-  - kind 0，共享密钥：`[0][u16 len][secret][u16 service_len][service]`
-  - kind 1，访问令牌：`[1][u16 len][token][u16 service_len][service]`
-  agent 在本地校验 kind-0 密钥，而 kind-1 令牌则通过询问服务端（`TokenCheck`）来校验。未配置密钥时，agent 接受 kind 0，与控制面一致。
+- **流前导**：拨号方（peer）在每个流的头几个字节发一个访问令牌：
+  `[1][u16 len][token][u16 service_len][service]`。agent 本地无法验证它，因此拿去问
+  服务端（`TokenCheck`）。没有令牌就拒绝该流。
 - **流确认**：接受方在前导和本地拨号之后回复一个字节：`STREAM_ACK_OK`（载荷可以流动）或 `STREAM_ACK_ERR`（明确拒绝）。这是拨号方载荷前重试的提交点。
-- **不透明访问令牌，在线校验**：peer 从 `P2PLookup` 获得一个短期令牌，并在流前导中出示它（kind 1）。agent 无法验证它，因此它会询问服务端（`TokenCheck` → `TokenCheckResp`）；服务端只存储令牌哈希，作用域为 `account_id` + `name`。**数据面上不需要服务端密钥，也不需要共享密钥。** 代价是：服务端必须可达才能校验——令牌是一份授权，而不是离线能力。单独的 `--lookup-secret`（或主密钥）用于把关谁可以首先进行查询。
-- 前导是应用层授权，而不是传输加密；它与控制面的 `auth_key` 交换不同。
+- **不透明访问令牌，在线校验**：peer 从 `P2PLookup` 获得一个短期令牌，并在流前导中出示它。agent 无法验证它，因此它会询问服务端（`TokenCheck` → `TokenCheckResp`）；服务端只存储令牌哈希，作用域为 `account_id` + `name`。**数据面上不需要任何密钥。** 代价是：服务端必须可达才能校验——令牌是一份授权，而不是离线能力。
+- **谁可以查目录**：查目录用的也是控制面的登录（`client_kind:"lookup"`），所以查询者是一个已认证的账户，不需要单独的查询密钥。
+- 前导是应用层授权，而不是传输加密。
 
 ## 8. 端口映射
 
@@ -143,7 +144,6 @@ Agent（全局标志）：
 |---|---|---|
 | `<control-server>`（唯一的位置参数） | | 控制服务器地址,如 `srv:9009` |
 | `--state-file` | `TELESH_STATE` | 身份与会话文件(发布配置放在同目录) |
-| `--enroll <s>` | `TELESH_ENROLLMENT_SECRET` | 首次注册用的注册密钥 |
 | `--dashboard-addr` | `TELESH_INSPECTOR_ADDR` | 本地发布管理 UI 地址(默认 `127.0.0.1:16345`) |
 
 Agent 仅环境变量开关：`TELESH_NO_PORTMAP=1`（禁用 UDP 网关探测）。iroh 中继**不是** agent 的设置：由服务端在登录后通告。
@@ -159,7 +159,6 @@ TOML 文件读,字段都可以省略。示例见 `crates/telesh-server/server.to
 | `control_addr` | agent 连控制面的端口(`/api/tunnel`);同一个端口也提供 dashboard(`/`、`/api/*`) |
 | `ingress_addr` / `data_addr` | 公网入口 / 数据面监听地址 |
 | `public_host` | 拼隧道 URL 的公网后缀 |
-| `secret` / `lookup_secret` / `enrollment_secret` | 主密钥 / 查询密钥 / 注册密钥 |
 | `tcp_port_range` | TCP 隧道端口范围,例如 `"18000-18100"` |
 | `[relay] serve` | 运行内嵌 iroh 中继的地址 |
 | `[relay] url` | 通告给 agent 的 relay URL |
@@ -173,7 +172,7 @@ TOML 文件读,字段都可以省略。示例见 `crates/telesh-server/server.to
 - 内嵌中继支持手动 PEM TLS 和 ACME/Let's Encrypt（在 HTTPS 监听器上使用 TLS-ALPN-01）；尚无其他证书模式。
 - 访问令牌是不透明的且由服务端校验，因此每条数据面流都要求服务端可达。它们是授权，而不是每个 peer 的身份。
 - 一条已接受的本地连接只会在流确认之前跨 P2P 重连进行重试；一旦载荷已经流动就不再重放（否则会在 peer 上重复数据）。当 30s 窗口到期时仍在排队的连接会被丢弃。
-- 服务名归属只在 endpoint 连接期间有效。当它断开时名称会被释放，因此另一个持有主密钥的 peer 可以认领它。持久的 `name -> endpoint_id` 预留可以堵上这个缺口；用每个 agent 各自的凭证替代一个共享密钥才能妥善堵上它。
+- 服务名归属只在 endpoint 连接期间有效。当它断开时名称会被释放，因此另一个 peer 可以认领它。持久的 `name -> endpoint_id` 预留可以堵上这个缺口。
 - 控制订阅是唯一会强制重新查询的东西：如果访问方的 WebSocket 断开，`run_connect` 会返回，调用方会重新订阅。仅地址变化从不会触发重新查询。
 - 在短暂重连窗口期间到达的本地连接会为等待一条活跃连接最多等待 `CONNECT_TIMEOUT`，然后放弃。
 - MSRV 为 1.91（iroh 1.2）。

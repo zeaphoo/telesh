@@ -94,15 +94,6 @@ pub struct Config {
     /// 空表示上报的 hostname 就只有子域。
     pub public_host: String,
 
-    /// 主密钥。设置后 agent 登录必须带上它。
-    pub secret: String,
-
-    /// 只用于查询的密钥,让 peer 不必知道主密钥。为空时 peer 只能用主密钥查。
-    pub lookup_secret: String,
-
-    /// 首次注册需要的密钥。设置后关闭开放注册。
-    pub enrollment_secret: String,
-
     /// TCP 隧道的端口范围,例如 `"18000-18100"`。
     pub tcp_port_range: TcpPortRange,
 
@@ -118,9 +109,6 @@ impl Default for Config {
             ingress_addr: "0.0.0.0:8080".parse().expect("valid default"),
             data_addr: "0.0.0.0:9008".parse().expect("valid default"),
             public_host: String::new(),
-            secret: String::new(),
-            lookup_secret: String::new(),
-            enrollment_secret: String::new(),
             tcp_port_range: TcpPortRange {
                 start: 18000,
                 end: 18100,

@@ -102,7 +102,7 @@ export default function PublishView() {
   // `cfg` is keyed by local_port and holds the *desired* config being edited.
   const [cfg, setCfg] = useState({})
   const [mirrors, setMirrors] = useState([])
-  const [mirrorForm, setMirrorForm] = useState({ remote: '', local_port: '', secret: '' })
+  const [mirrorForm, setMirrorForm] = useState({ remote: '', local_port: '' })
   const [mirrorWarn, setMirrorWarn] = useState(null)
   const seeded = useRef(false)
 
@@ -118,7 +118,6 @@ export default function PublishView() {
         mirrorRows.push({
           local_port: String(e.local_port),
           remote: e.remote ?? '',
-          secret: e.secret ?? '',
         })
         continue
       }
@@ -200,7 +199,6 @@ export default function PublishView() {
     for (const m of mirrors) {
       const entry = { kind: 'mirror', local_port: Number(m.local_port) }
       if (m.remote?.trim()) entry.remote = m.remote.trim()
-      if (m.secret?.trim()) entry.secret = m.secret.trim()
       out.push(entry)
     }
     return out
@@ -213,7 +211,6 @@ export default function PublishView() {
 
   const addMirror = () => {
     const remote = mirrorForm.remote.trim()
-    const secret = mirrorForm.secret.trim()
     const rawPort = mirrorForm.local_port.trim()
     const port = Number(rawPort)
     if (!remote) {
@@ -229,9 +226,8 @@ export default function PublishView() {
       return
     }
     const row = { local_port: String(port), remote }
-    if (secret) row.secret = secret
     setMirrors((m) => [...m, row])
-    setMirrorForm({ remote: '', local_port: '', secret: '' })
+    setMirrorForm({ remote: '', local_port: '' })
     setMirrorWarn(null)
   }
 
@@ -421,8 +417,8 @@ export default function PublishView() {
             <ArrowRightLeft className="size-4" /> 镜像远端服务
           </CardTitle>
           <CardDescription>
-            把远端服务镜像到本地端口:填写 ACCOUNT/NAME 与本地监听端口后加入列表(服务端要求
-            lookup secret 时一并填写)
+            把远端服务镜像到本地端口:填写 ACCOUNT/NAME 与本地监听端口后加入列表。这条连接
+            用本机 agent 自己的身份登录服务端,不需要额外密钥。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -441,14 +437,6 @@ export default function PublishView() {
               value={mirrorForm.local_port}
               onChange={(e) => setMirrorForm((f) => ({ ...f, local_port: e.target.value }))}
               placeholder="本地端口"
-            />
-            <input
-              className={`${INPUT_CLS} w-56`}
-              type="password"
-              autoComplete="off"
-              value={mirrorForm.secret}
-              onChange={(e) => setMirrorForm((f) => ({ ...f, secret: e.target.value }))}
-              placeholder="lookup secret(服务端要求时填)"
             />
             <Button variant="outline" size="sm" onClick={addMirror} className="gap-1">
               <Plus className="size-3.5" /> 加入列表
@@ -476,11 +464,6 @@ export default function PublishView() {
                     <TableCell className="font-mono text-xs">
                       <div className="flex items-center gap-1.5">
                         <span>{m.remote || '—'}</span>
-                        {m.secret && (
-                          <Badge variant="outline" title="已设置 lookup secret">
-                            密码
-                          </Badge>
-                        )}
                       </div>
                     </TableCell>
                     <TableCell className="font-mono text-xs">{m.local_port}</TableCell>

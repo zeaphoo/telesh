@@ -33,9 +33,6 @@ pub enum Entry {
     Mirror {
         local_port: u16,
         remote: String,
-        /// 服务端配置了 `--lookup-secret` / `--secret` 时,lookup 连接要带它。
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        secret: Option<String>,
     },
 }
 

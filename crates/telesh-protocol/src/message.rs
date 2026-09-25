@@ -251,8 +251,6 @@ pub enum AuthError {
     BadSignature,
     BadSession,
     SessionExpired,
-    EnrollmentRequired,
-    EnrollmentRejected,
     UnsupportedMethod,
     Error(String),
 }
@@ -288,15 +286,6 @@ pub struct TcpMapped {
     pub addr: std::net::SocketAddr,
     /// 被映射的本地端口。
     pub local_port: u16,
-}
-
-/// Peer → server:打开一条 lookup-only 控制连接(不注册任何东西)。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LookupHello {
-    /// 服务端配置了主密钥 / lookup 密钥时必须匹配。
-    pub auth_key: Option<String>,
-    /// 临时标识,只用于日志。
-    pub agent_id: String,
 }
 
 /// Agent → server:注册一个 peer 可以直连的 iroh 服务。
@@ -349,8 +338,6 @@ pub struct ClientHello {
     /// 快路径用的不透明会话令牌。
     #[serde(with = "b64_opt")]
     pub session: Option<Vec<u8>>,
-    /// 服务端配置了注册密钥时,首次注册必须带上。
-    pub enrollment: Option<String>,
     /// 友好节点名。
     pub display_name: Option<String>,
 }
@@ -367,7 +354,6 @@ pub enum ServerHello {
         /// 数据面地址 `<host>:<port>`;`None` 表示服务端没有数据面。
         data_addr: Option<String>,
     },
-    AuthFailed,
     Error(String),
 }
 
@@ -447,7 +433,6 @@ pub enum Frame {
     P2PAnnounceResp(P2PAnnounceResp),
     P2PLookup(P2PLookup),
     P2PAddr(P2PAddrResp),
-    Lookup(LookupHello),
     Traffic(TrafficReport),
     TcpMapped(TcpMapped),
     AuthChallenge(AuthChallenge),

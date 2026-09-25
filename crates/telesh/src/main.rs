@@ -47,10 +47,6 @@ struct Cli {
     #[arg(long, global = true, env = "TELESH_INSPECTOR_ADDR", default_value = "127.0.0.1:16345")]
     dashboard_addr: SocketAddr,
 
-    /// 首次注册需要的 enrollment secret。
-    #[arg(long, global = true, env = "TELESH_ENROLLMENT_SECRET")]
-    enroll: Option<String>,
-
 }
 
 #[tokio::main]
@@ -91,7 +87,6 @@ async fn main() -> Result<()> {
         control_addr: control_addr.clone(),
         secret_key: state.secret_key,
         session: state.live_session(),
-        enrollment: cli.enroll.clone(),
         node_name: state.name.clone(),
         state_path,
         no_portmap: env_flag("TELESH_NO_PORTMAP"),

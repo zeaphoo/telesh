@@ -16,7 +16,7 @@ use tracing::{debug, error, info, warn};
 
 use telesh_protocol::{
     self as proto, decode, encode, login_message, AuthChallenge, AuthError, AuthMethod, AuthOk,
-    ClientHello, Frame, LookupHello, P2PAddrResp, P2PAnnounceResp, PublicKey, ServerHello,
+    ClientHello, ClientKind, Frame, P2PAddrResp, P2PAnnounceResp, PublicKey, ServerHello,
     Signature, TokenCheckResp, TunnelKind, TunnelPublish, TunnelResp, TunnelResult,
 };
 
@@ -41,27 +41,40 @@ async fn tunnel_ws(
     ws.on_upgrade(move |socket| handle_connection(addr, socket))
 }
 
-/// One control connection: dispatch on the first frame, which selects the role
-/// (tunnel agent vs. lookup-only peer).
+/// One control connection. 所有连接(agent 的和 peer 的)都先登录,登录之后按
+/// `hello.client_kind` 分流:agent 去发布/接收隧道,peer 只查 P2P 目录。
 async fn handle_connection(addr: SocketAddr, mut socket: WebSocket) {
-    let Some(first) = recv_first(&mut socket).await else {
+    let Some(hello) = recv_hello(&mut socket).await else {
         return;
     };
-    let hello = match first {
-        FirstFrame::Lookup(v) => return handle_lookup(addr, socket, v).await,
-        FirstFrame::Agent(h) => h,
-    };
-
-    let reg = registry();
 
     // ---- Login: keypair challenge-response, or a session fast path ----
     let account = match login(&mut socket, &hello).await {
         Some(a) => a,
         None => return,
     };
-    // The account handle (zero-padded 9-digit short id) replaces the old
-    // self-declared agent_id everywhere downstream.
+    // 账户句柄(补零的 9 位短 id)在下面各处取代了自申报的 agent_id。
     let agent_id = crate::db::account_handle(account);
+
+    // peer(镜像那条连接)登录后只查目录,不注册任何东西。
+    if hello.client_kind == ClientKind::Lookup {
+        if send(
+            &mut socket,
+            &Frame::ServerHello(ServerHello::Success {
+                agent_id: agent_id.clone(),
+                relay_url: crate::state::relay_url(),
+                data_addr: crate::state::data_addr(),
+            }),
+        )
+        .await
+        .is_err()
+        {
+            return;
+        }
+        return handle_lookup(addr, socket, agent_id).await;
+    }
+
+    let reg = registry();
 
     // 每条控制连接一个 id:重连时新连接可能先注册,旧连接的清理不能删掉新状态。
     let conn_id = crate::state::next_conn_id();
@@ -159,20 +172,13 @@ async fn handle_connection(addr: SocketAddr, mut socket: WebSocket) {
     info!(agent_id = %agent_id, %addr, "agent disconnected");
 }
 
-/// The first frame on a control connection, which sets the connection's role.
-enum FirstFrame {
-    Agent(ClientHello),
-    Lookup(LookupHello),
-}
-
-/// Read the first message; must be a JSON `hello` (agent) or `lookup` (lookup-only).
-async fn recv_first(socket: &mut WebSocket) -> Option<FirstFrame> {
+/// 读第一帧:必须是 `hello`(agent 和 peer 都发它,靠 `client_kind` 区分)。
+async fn recv_hello(socket: &mut WebSocket) -> Option<ClientHello> {
     match tokio::time::timeout(Duration::from_secs(10), socket.next()).await {
         Ok(Some(Ok(Message::Text(text)))) => match decode(&text) {
-            Ok(Frame::Hello(h)) => Some(FirstFrame::Agent(h)),
-            Ok(Frame::Lookup(v)) => Some(FirstFrame::Lookup(v)),
+            Ok(Frame::Hello(h)) => Some(h),
             Ok(other) => {
-                warn!("expected hello/lookup as first frame, got {other:?}");
+                warn!("expected hello as the first frame, got {other:?}");
                 None
             }
             Err(e) => {
@@ -184,27 +190,7 @@ async fn recv_first(socket: &mut WebSocket) -> Option<FirstFrame> {
     }
 }
 
-/// Constant-time comparison of a presented key against an expected secret.
-fn key_eq(key: Option<&str>, expected: &str) -> bool {
-    key.map(|k| {
-        k.as_bytes().iter().zip(expected.as_bytes()).all(|(a, b)| a == b)
-            && k.len() == expected.len()
-    }) == Some(true)
-}
-
-/// Auth for lookup-only peers. Accepts the master secret or, if configured,
-/// a separate lower-privilege peer secret. Actual data access is gated by the
-/// short-lived token the server mints, not by this secret.
-fn lookup_auth_ok(key: Option<&str>) -> bool {
-    let cfg = config();
-    if cfg.secret.is_empty() && cfg.lookup_secret.is_empty() {
-        return true;
-    }
-    (!cfg.secret.is_empty() && key_eq(key, &cfg.secret))
-        || (!cfg.lookup_secret.is_empty() && key_eq(key, &cfg.lookup_secret))
-}
-
-/// Authenticate an agent: session fast path first, otherwise a keypair
+/// Authenticate a client: session fast path first, otherwise a keypair
 /// challenge-response. Returns the account id, or `None` after notifying the
 /// client of the failure.
 async fn login(socket: &mut WebSocket, hello: &ClientHello) -> Option<u32> {
@@ -271,33 +257,23 @@ async fn login(socket: &mut WebSocket, hello: &ClientHello) -> Option<u32> {
         return None;
     }
 
-    // Find or create the account (TOFU). Registration is gated by the optional
-    // enrollment secret; an existing key is never re-gated.
-    let existing = match crate::db::account_for_key(pool, &pubkey_bytes).await {
-        Ok(v) => v,
+    // Find or create the account (TOFU): 新公钥第一次登录就建账号并绑定它。
+    // 更严的注册策略(匿名/邀请/OIDC)以后再加,不再是配置里的一个共享密钥。
+    let account = match crate::db::account_for_key(pool, &pubkey_bytes).await {
+        Ok(Some(a)) => a,
+        Ok(None) => match crate::db::account_for_key_or_create(pool, &pubkey_bytes).await {
+            Ok(a) => {
+                info!(account = %crate::db::account_handle(a), endpoint = %pubkey.fmt_short(), "new account registered");
+                a
+            }
+            Err(e) => {
+                let _ = send(socket, &Frame::AuthError(AuthError::Error(e.to_string()))).await;
+                return None;
+            }
+        },
         Err(e) => {
             let _ = send(socket, &Frame::AuthError(AuthError::Error(e.to_string()))).await;
             return None;
-        }
-    };
-    let account = match existing {
-        Some(a) => a,
-        None => {
-            if !enrollment_ok(hello.enrollment.as_deref()) {
-                warn!(endpoint = %pubkey.fmt_short(), "registration rejected (enrollment)");
-                let _ = send(socket, &Frame::AuthError(AuthError::EnrollmentRejected)).await;
-                return None;
-            }
-            match crate::db::account_for_key_or_create(pool, &pubkey_bytes).await {
-                Ok(a) => {
-                    info!(account = %crate::db::account_handle(a), endpoint = %pubkey.fmt_short(), "new account registered");
-                    a
-                }
-                Err(e) => {
-                    let _ = send(socket, &Frame::AuthError(AuthError::Error(e.to_string()))).await;
-                    return None;
-                }
-            }
         }
     };
 
@@ -368,12 +344,6 @@ async fn read_auth_response(socket: &mut WebSocket) -> Option<[u8; 64]> {
     }
 }
 
-/// Whether first-time registration is allowed with the presented secret.
-fn enrollment_ok(secret: Option<&str>) -> bool {
-    let expected = &config().enrollment_secret;
-    expected.is_empty() || key_eq(secret, expected)
-}
-
 /// Session lifetime: a fixed 12h ceiling.
 fn session_ttl() -> u64 {
     crate::db::SESSION_TTL_SECS
@@ -388,30 +358,12 @@ fn now_secs() -> u64 {
 
 /// Answer a lookup-only peer. Peers never register a tunnel, so this
 /// connection only ever serves `P2PLookup` (plus keepalives) until it closes.
-async fn handle_lookup(addr: SocketAddr, mut socket: WebSocket, hello: LookupHello) {
-    if !lookup_auth_ok(hello.auth_key.as_deref()) {
-        warn!(peer = %hello.agent_id, "peer auth failed");
-        let _ = send(&mut socket, &Frame::ServerHello(ServerHello::AuthFailed)).await;
-        return;
-    }
-    if send(
-        &mut socket,
-        &Frame::ServerHello(ServerHello::Success {
-            agent_id: hello.agent_id.clone(),
-            relay_url: crate::state::relay_url(),
-            data_addr: crate::state::data_addr(),
-        }),
-    )
-    .await
-    .is_err()
-    {
-        return;
-    }
+async fn handle_lookup(addr: SocketAddr, socket: WebSocket, agent_id: String) {
     // Replies and future push notifications go through a channel drained by a
     // sink task, so a re-announcing agent can notify this peer too.
     let (tx, mut rx) = mpsc::unbounded_channel::<Frame>();
     let (mut sink, mut stream) = socket.split();
-    let peer_id = hello.agent_id.clone();
+    let peer_id = agent_id;
     tokio::spawn(async move {
         while let Some(frame) = rx.recv().await {
             let msg = match wire_message(&frame) {
@@ -644,7 +596,6 @@ async fn dispatch(
         Frame::Hello(_)
         | Frame::ServerHello(_)
         | Frame::Ping
-        | Frame::Lookup(_)
         | Frame::P2PAnnounceResp(_)
         | Frame::AuthChallenge(_)
         | Frame::AuthResponse(_)
