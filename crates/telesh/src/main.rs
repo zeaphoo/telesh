@@ -48,9 +48,7 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let dataroot = Cli::parse()
-        .dataroot
-        .unwrap_or_else(state::default_dataroot);
+    let dataroot = config::expand_tilde(&Cli::parse().dataroot.unwrap_or_else(state::default_dataroot));
     std::fs::create_dir_all(&dataroot)
         .with_context(|| format!("cannot create dataroot {}", dataroot.display()))?;
 

@@ -74,6 +74,28 @@ pub fn file_path(dataroot: &Path) -> PathBuf {
     dataroot.join(FILE_NAME)
 }
 
+/// 把路径开头的 `~` 展开成用户主目录(`~` 与 `~/…`;`~user` 不处理)。
+///
+/// `--dataroot "~/telesh"` 要落到 `/home/you/telesh`,而不是在当前目录下建一个
+/// 叫 `~` 的目录。没有 `HOME` 时原样返回。
+pub fn expand_tilde(path: &Path) -> PathBuf {
+    let Ok(home) = std::env::var("HOME") else {
+        return path.to_path_buf();
+    };
+    let mut comps = path.components();
+    match comps.next() {
+        Some(std::path::Component::Normal(first)) if first == "~" => {
+            let rest = comps.as_path();
+            if rest.as_os_str().is_empty() {
+                PathBuf::from(home)
+            } else {
+                PathBuf::from(home).join(rest)
+            }
+        }
+        _ => path.to_path_buf(),
+    }
+}
+
 /// 把用户写的地址规范化成 `host:port`;只有主机名时补控制面的默认端口。
 pub fn normalize(raw: &str) -> Option<String> {
     let s = raw.trim();
@@ -121,6 +143,18 @@ mod tests {
         );
         assert!(normalize("").is_none());
         assert!(normalize("ws://").is_none());
+    }
+
+    #[test]
+    fn expands_a_leading_tilde() {
+        let home = PathBuf::from(std::env::var("HOME").expect("HOME is set in tests"));
+        assert_eq!(expand_tilde(Path::new("~/telesh")), home.join("telesh"));
+        assert_eq!(expand_tilde(Path::new("~")), home);
+        assert_eq!(
+            expand_tilde(Path::new("/srv/telesh")),
+            PathBuf::from("/srv/telesh")
+        );
+        assert_eq!(expand_tilde(Path::new("~root/x")), PathBuf::from("~root/x"));
     }
 
     #[test]
