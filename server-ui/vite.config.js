@@ -11,8 +11,8 @@ export default defineConfig({
   server: {
     port: 16473,
     proxy: {
-      '/api': 'http://127.0.0.1:16456',
-      '/metrics': 'http://127.0.0.1:16456',
+      '/api': 'http://127.0.0.1:9009',
+      '/metrics': 'http://127.0.0.1:9009',
     },
   },
   build: {
