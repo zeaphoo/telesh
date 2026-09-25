@@ -80,7 +80,8 @@ pub struct Config {
     /// 数据根目录:数据库、证书缓存等都放这里。默认 `~/.telesh`。
     pub dataroot: PathBuf,
 
-    /// agent 连控制面的地址(`ws://.../tunnel`)。
+    /// agent 连控制面的地址(`ws://.../tunnel`)。同一个端口也提供 dashboard
+    /// (`/` 前端、`/api/*`、`/metrics`)。
     pub control_addr: SocketAddr,
 
     /// 边缘入口监听公网连接(HTTP 用 Host 头选隧道,TCP 按端口)。
@@ -88,9 +89,6 @@ pub struct Config {
 
     /// 数据面地址:agent 主动连这里,yamux over TCP。
     pub data_addr: SocketAddr,
-
-    /// dashboard(API + 前端 + /metrics)监听地址。默认只 bind 回环。
-    pub dashboard_addr: SocketAddr,
 
     /// 拼隧道 URL 用的公网后缀,例如 `example.com` → `http://<sub>.example.com:8080`。
     /// 空表示上报的 hostname 就只有子域。
@@ -119,7 +117,6 @@ impl Default for Config {
             control_addr: "0.0.0.0:9009".parse().expect("valid default"),
             ingress_addr: "0.0.0.0:8080".parse().expect("valid default"),
             data_addr: "0.0.0.0:9008".parse().expect("valid default"),
-            dashboard_addr: "127.0.0.1:16456".parse().expect("valid default"),
             public_host: String::new(),
             secret: String::new(),
             lookup_secret: String::new(),
@@ -178,7 +175,6 @@ impl Config {
             control = %self.control_addr,
             ingress = %self.ingress_addr,
             data = %self.data_addr,
-            dashboard = %self.dashboard_addr,
             tcp_range = %format_args!("{}-{}", self.tcp_port_range.start, self.tcp_port_range.end),
             public_host = %if self.public_host.is_empty() { "(none)" } else { &self.public_host },
             embedded_relay = ?self.relay.serve,

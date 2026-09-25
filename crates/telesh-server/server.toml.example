@@ -7,7 +7,8 @@
 # 数据根目录:数据库、ACME 证书缓存等都放这里。默认 ~/.telesh。
 dataroot = "/var/lib/telesh"
 
-# agent 连控制面的地址。默认 0.0.0.0:9009。
+# agent 连控制面的地址;同一个端口也提供 dashboard(`/`、`/api/*`、`/metrics`)。
+# 默认 0.0.0.0:9009。
 control_addr = "0.0.0.0:9009"
 
 # 边缘入口:公网 HTTP / TCP 从这里进来。默认 0.0.0.0:8080。
@@ -15,9 +16,6 @@ ingress_addr = "0.0.0.0:8080"
 
 # 数据面:agent 主动连这里。默认 0.0.0.0:9008。
 data_addr = "0.0.0.0:9008"
-
-# dashboard(API + 前端 + /metrics)。默认 127.0.0.1:16456。
-dashboard_addr = "127.0.0.1:16456"
 
 # 拼隧道 URL 用的公网后缀。默认空。
 public_host = "example.com"

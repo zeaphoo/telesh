@@ -44,32 +44,20 @@ async fn main() -> anyhow::Result<()> {
     let data_listener = tokio::net::TcpListener::bind(data_addr).await?;
 
     let ctrl_addr = cfg.control_addr;
-    let dash_addr = cfg.dashboard_addr;
 
-    // HTTP control server (serves /tunnel WebSocket + /healthz).
-    let app = control::router().into_make_service_with_connect_info::<SocketAddr>();
-    let ctrl = async move {
+    // 一个 HTTP 监听同时提供控制面和 dashboard:agent 连 `/tunnel`,浏览器开
+    // `/` 看管理界面、`/api/*` 和 `/metrics`。
+    let app = control::router()
+        .merge(dashboard::router())
+        .into_make_service_with_connect_info::<SocketAddr>();
+    let http = async move {
         let listener = tokio::net::TcpListener::bind(ctrl_addr).await?;
-        tracing::info!(%ctrl_addr, "control server listening (ws://.../tunnel)");
+        tracing::info!(%ctrl_addr, "control server + dashboard listening (ws://.../tunnel, http://.../)");
         axum::serve(listener, app).await?;
         Ok::<_, anyhow::Error>(())
     };
 
-    // Dashboard (API + built frontend + prometheus).
-    let dash = async move {
-        let app = dashboard::router();
-        let listener = tokio::net::TcpListener::bind(dash_addr).await?;
-        tracing::info!(%dash_addr, "dashboard listening (http://.../)");
-        axum::serve(listener, app).await?;
-        Ok::<_, anyhow::Error>(())
-    };
-
-    tokio::try_join!(
-        ctrl,
-        ingress::run_ingress(),
-        dash,
-        data::run(data_listener)
-    )?;
+    tokio::try_join!(http, ingress::run_ingress(), data::run(data_listener))?;
     Ok(())
 }
 

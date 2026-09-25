@@ -156,7 +156,8 @@ TOML 文件读,字段都可以省略。示例见 `crates/telesh-server/server.to
 | 配置字段 | 含义 |
 |---|---|
 | `dataroot` | 数据根目录(数据库、ACME 缓存等),默认 `~/.telesh` |
-| `control_addr` / `ingress_addr` / `data_addr` / `dashboard_addr` | 各监听地址 |
+| `control_addr` | agent 连控制面的端口;同一个端口也提供 dashboard(`/`、`/api/*`、`/metrics`) |
+| `ingress_addr` / `data_addr` | 公网入口 / 数据面监听地址 |
 | `public_host` | 拼隧道 URL 的公网后缀 |
 | `secret` / `lookup_secret` / `enrollment_secret` | 主密钥 / 查询密钥 / 注册密钥 |
 | `tcp_port_range` | TCP 隧道端口范围,例如 `"18000-18100"` |
