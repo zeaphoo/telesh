@@ -1,0 +1,12 @@
+# agent 配置示例。放在 dataroot 目录里,默认 ~/.telesh/config.toml。
+#
+# 用法:
+#
+#     telesh                    # 用默认 dataroot ~/.telesh
+#     telesh --dataroot /etc/telesh
+#
+# 身份/会话(state)和发布配置(publish.json)也都在这个目录里。
+
+# 要连的 control server。必须填,否则 agent 起不来。
+# 可以只写 host,端口默认 9009;粘贴 ws://host:port/api/tunnel 也能认。
+control_server = "tunnel.example.com:9009"

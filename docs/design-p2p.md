@@ -142,9 +142,9 @@ Agent（全局标志）：
 
 | 参数 | 含义 |
 |---|---|
-| `<control-server>` | 唯一参数:控制服务器地址,如 `srv:9009` |
+| `--dataroot <DIR>` | 数据目录(默认 `~/.telesh`),里面放 `config.toml` / `state` / `publish.json` |
 
-没有别的开关,也没有环境变量:身份/会话固定在 `~/.telesh/state`(发布配置同目录),
+control server 地址写在 `<dataroot>/config.toml` 的 `control_server` 里,不是命令行参数。
 本地 UI 固定在 `127.0.0.1:16345`。iroh 中继**不是** agent 的设置:由服务端在登录后通告。
 
 发布与镜像都在本地 UI 上配置,没有 `telesh p2p` / `telesh connect` 子命令。

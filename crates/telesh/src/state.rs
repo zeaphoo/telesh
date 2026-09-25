@@ -59,12 +59,17 @@ impl AgentState {
     }
 }
 
-/// 身份/会话文件的固定位置:`~/.telesh/state`;没有 HOME 时退到当前目录。
-pub fn default_path() -> PathBuf {
-    if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home).join(".telesh").join("state");
+/// 默认数据目录:`~/.telesh`;没有 HOME 时用当前目录下的 `.telesh`。
+pub fn default_dataroot() -> PathBuf {
+    match std::env::var("HOME") {
+        Ok(home) => PathBuf::from(home).join(".telesh"),
+        Err(_) => PathBuf::from(".telesh"),
     }
-    PathBuf::from(".telesh-state")
+}
+
+/// 身份/会话文件:`<dataroot>/state`。
+pub fn state_path(dataroot: &Path) -> PathBuf {
+    dataroot.join("state")
 }
 
 /// Load state, generating a fresh identity if the file is absent.

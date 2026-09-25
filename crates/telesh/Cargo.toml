@@ -31,3 +31,5 @@ axum = { workspace = true }
 rust-embed = "8"
 serde = { workspace = true }
 serde_json = "1"
+# agent 配置文件(<dataroot>/config.toml)。
+toml = "0.8"

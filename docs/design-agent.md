@@ -18,13 +18,15 @@
 端口就要 5 个进程、5 次登录、5 条控制连接 + 5 条数据连接,而且本地 UI 只是个被动的
 请求日志页。
 
-**目标**:一个常驻进程,唯一必需参数是 control server;在本机 UI 上看到本机监听的
-端口,按需决定发布哪一个、以什么方式发布;随时开关,不用重启。
+**目标**:一个常驻进程,要连的 control server 写在数据目录的配置文件里(命令行只有
+一个 `--dataroot`);在本机 UI 上看到本机监听的端口,按需决定发布哪一个、以什么方式
+发布;随时开关,不用重启。
 
 ## 1. 目标形态
 
 ```
-telesh <control-server>          # 唯一的必需参数
+telesh                           # 用默认 dataroot ~/.telesh
+telesh --dataroot /etc/telesh     # 或指定数据目录
 ```
 
 - 发布配置是 UI 上的**声明式状态**,进程负责 reconcile。
@@ -34,13 +36,21 @@ telesh <control-server>          # 唯一的必需参数
 
 | 参数 | 说明 |
 |---|---|
-| `<control-server>` | **唯一参数**,控制服务器 `host:port` |
+| `--dataroot <DIR>` | 数据目录,默认 `~/.telesh` |
 
-没有别的开关,也没有环境变量:
+只有一个开关,没有环境变量。**要连哪个 control server 不是命令行参数**,而是配置文件:
 
-- 身份/会话文件固定在 `~/.telesh/state`,`publish.json` 放在同一目录。
+```text
+<dataroot>/config.toml     control_server = "tunnel.example.com:9009"
+<dataroot>/state           Ed25519 身份 + 缓存的 session(自动生成)
+<dataroot>/publish.json    UI 上的发布配置(声明式状态)
+```
+
+- 地址只写 `host` 时端口默认 `9009`;粘贴 `ws://host:port/api/tunnel` 也认。
+- `config.toml` 里没有 `control_server` 就报错退出。
 - 本地 UI 固定在 `http://127.0.0.1:16345`。
 - iroh 的 UDP 网关探测(portmapper)按 iroh 默认开启。
+- 示例见 `crates/telesh/config.toml.example`。
 
 进程内同时持有两种角色:
 
