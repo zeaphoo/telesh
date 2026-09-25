@@ -99,7 +99,6 @@ mod tests {
                 kind: TunnelKind::Http,
                 key: "web".into(),
             }),
-            Frame::IrohReady(endpoint_addr()),
             Frame::P2PAnnounce(P2PAnnounce {
                 name: "svc".into(),
                 addr: endpoint_addr(),
@@ -116,13 +115,22 @@ mod tests {
     #[test]
     fn endpoint_id_is_hex_and_addrs_carry_a_kind_prefix() {
         let addr = endpoint_addr();
-        let text = encode(&Frame::IrohReady(addr.clone())).unwrap();
+        let text = encode(&Frame::P2PAnnounce(P2PAnnounce {
+            name: "svc".into(),
+            addr: addr.clone(),
+            local_port: 8000,
+        }))
+        .unwrap();
         assert!(text.contains(&format!("\"id\":\"{}\"", addr.id)), "{text}");
         assert!(text.contains("\"ip:192.168.1.5:1234\""), "{text}");
         assert!(text.contains("\"relay:https://relay.example.com/\""), "{text}");
 
         let back = decode(&text).unwrap();
-        assert_eq!(format!("{back:?}"), format!("{:?}", Frame::IrohReady(addr)));
+        assert_eq!(format!("{back:?}"), format!("{:?}", Frame::P2PAnnounce(P2PAnnounce {
+            name: "svc".into(),
+            addr,
+            local_port: 8000,
+        })));
     }
 
     #[test]

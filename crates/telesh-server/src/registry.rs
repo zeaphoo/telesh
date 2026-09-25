@@ -10,8 +10,6 @@ use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use tracing::debug;
 
-use telesh_protocol::EndpointAddr;
-
 use crate::data::DataHandle;
 
 /// 一条隧道路由。
@@ -44,8 +42,6 @@ pub struct Registry {
     agents: DashMap<String, AgentConn>,
     /// HTTP 路由:子域 → 目标。
     by_host: DashMap<String, Route>,
-    /// iroh 地址,由 `Frame::IrohReady` 上报。
-    iroh: DashMap<String, EndpointAddr>,
     /// agent 主动连入的数据连接。
     data: DashMap<String, DataEntry>,
 }
@@ -74,15 +70,14 @@ impl Registry {
         debug!(agent_id, "agent registered");
     }
 
-    /// 控制连接断开:清掉它的路由、iroh 地址和数据连接。
-    /// 控制连接断开。只有**当前**连接(conn_id 相同)才会清掉 agent 记录与路由:
+    /// 控制连接断开:清掉它那条数据连接与路由。
+    /// 只有**当前**连接(conn_id 相同)才会清掉 agent 记录与路由:
     /// 重连时新连接可能已经抢先注册,旧连接的清理不能把新状态删掉。
     pub fn remove(&self, agent_id: &str, conn_id: u64) {
         if self.agents.get(agent_id).is_some_and(|a| a.conn_id != conn_id) {
             debug!(agent_id, conn_id, "stale connection teardown ignored");
             return;
         }
-        self.iroh.remove(agent_id);
         if let Some((_, entry)) = self.data.remove(agent_id) {
             entry.handle.shutdown();
         }
@@ -167,17 +162,7 @@ impl Registry {
         v
     }
 
-    // ---- iroh / 数据面 ----
-
-    /// Record (or refresh) an agent's iroh data-plane address.
-    pub fn set_iroh_addr(&self, agent_id: &str, addr: EndpointAddr) {
-        self.iroh.insert(agent_id.to_string(), addr);
-    }
-
-    /// The agent's iroh data-plane address, if it announced one.
-    pub fn iroh_addr(&self, agent_id: &str) -> Option<EndpointAddr> {
-        self.iroh.get(agent_id).map(|e| e.clone())
-    }
+    // ---- 数据面 ----
 
     /// Register a data connection (an older run never replaces a newer one).
     pub fn set_data(&self, agent_id: &str, run_id: u64, handle: DataHandle) {

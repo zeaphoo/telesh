@@ -42,8 +42,9 @@ fn token_hash(token: &[u8]) -> [u8; 32] {
 }
 
 /// Open (creating if needed) the database and apply the schema.
-pub async fn open(path: &str) -> Result<SqlitePool> {
-    if let Some(dir) = std::path::Path::new(path).parent() {
+pub async fn open(path: impl AsRef<std::path::Path>) -> Result<SqlitePool> {
+    let path = path.as_ref();
+    if let Some(dir) = path.parent() {
         if !dir.as_os_str().is_empty() {
             std::fs::create_dir_all(dir)
                 .with_context(|| format!("cannot create {}", dir.display()))?;
@@ -57,7 +58,7 @@ pub async fn open(path: &str) -> Result<SqlitePool> {
         .max_connections(5)
         .connect_with(options)
         .await
-        .with_context(|| format!("cannot open database {path}"))?;
+        .with_context(|| format!("cannot open database {}", path.display()))?;
     // Schema is owned by sqlx migrations (`crates/telesh-server/migrations`).
     sqlx::migrate!("./migrations")
         .run(&pool)

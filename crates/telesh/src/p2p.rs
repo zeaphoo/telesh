@@ -461,15 +461,17 @@ async fn serve_stream(
         }
     };
     let service = preamble.service;
-    // Empty service = the trusted edge gateway (http/tcp), keyed by "".
-    // Otherwise the service is "<account>/<name>".
-    let (acct, name) = if service.is_empty() {
-        ("", "")
-    } else {
-        service
-            .split_once('/')
-            .unwrap_or(("", service.as_str()))
-    };
+    // 服务名一律是 "<account>/<name>";没有斜杠就只当名字用。
+    // 空服务名现在没有合法来源(公网 http/tcp 走数据连接,不连 iroh)。
+    if service.is_empty() {
+        warn!("peer requested an empty service");
+        let _ = send.write_all(&[STREAM_ACK_ERR]).await;
+        let _ = send.finish();
+        return Ok(());
+    }
+    let (acct, name) = service
+        .split_once('/')
+        .unwrap_or(("", service.as_str()));
     if let Some(own) = &account {
         if !acct.is_empty() && acct != own {
             warn!(%service, "requested service belongs to another account");
@@ -642,9 +644,9 @@ const CRED_TOKEN: u8 = 1;
 
 /// A dialer's stream preamble: a credential plus the requested service.
 struct Preamble {
-    /// Opaque access token (kind 1); `None` for shared-secret/gateway.
+    /// Opaque access token (kind 1).
     token: Option<Vec<u8>>,
-    /// `"<account>/<name>"`, or `""` for the trusted edge gateway.
+    /// `"<account>/<name>"`。
     service: String,
 }
 

@@ -632,11 +632,6 @@ async fn dispatch(
                 expires_at,
             }));
         }
-        // Direct data plane: remember where to reach this agent over iroh.
-        Frame::IrohReady(addr) => {
-            debug!(agent_id, endpoint = %addr.id.fmt_short(), "agent announced iroh data plane");
-            registry().set_iroh_addr(agent_id, addr);
-        }
         // Traffic the server cannot observe (pure P2P): account it per service.
         Frame::Traffic(t) => {
             crate::metrics::add_traffic(&format!("p2p:{}", t.name), t.up, t.down);

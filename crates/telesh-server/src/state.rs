@@ -10,7 +10,6 @@ use std::sync::OnceLock;
 use anyhow::Result;
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
-use iroh::Endpoint;
 use sqlx::SqlitePool;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -48,12 +47,8 @@ pub enum P2pClaim {
 /// P2P payload; it only brokers this address between agents and peers.
 pub static P2P_DIR: OnceLock<DashMap<String, P2pEntry>> = OnceLock::new();
 
-/// The server's own iroh endpoint, used to dial agents for the direct data
-/// plane (HTTP/TCP ingress). `None` until the server binds it at startup.
-pub static SERVER_ENDPOINT: OnceLock<Endpoint> = OnceLock::new();
-
-/// iroh relay URL announced to clients after login (and the one the gateway
-/// dials through). `None` means iroh's default (n0) relays.
+/// iroh relay URL announced to clients after login.
+/// `None` means iroh's default (n0) relays.
 pub static RELAY_URL: OnceLock<Option<String>> = OnceLock::new();
 
 /// Data-plane address announced to agents after login (the agent-initiated
@@ -89,10 +84,10 @@ pub async fn init() -> Result<()> {
     crate::metrics::init();
 
     let cfg = crate::config::config();
-    let db_path = cfg.db.clone().unwrap_or_else(|| {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        format!("{home}/.telesh/server.sqlite")
-    });
+    // 所有数据都在 dataroot 下:先建目录,再建数据库。
+    std::fs::create_dir_all(&cfg.dataroot)
+        .map_err(|e| anyhow::anyhow!("cannot create dataroot {}: {e}", cfg.dataroot.display()))?;
+    let db_path = cfg.db_path();
     let pool = crate::db::open(&db_path).await?;
     let _ = DB.set(pool);
     Ok(())
@@ -182,15 +177,6 @@ pub fn p2p_prune_subs() {
         subs.retain(|tx| !tx.is_closed());
         !subs.is_empty()
     });
-}
-
-pub fn set_server_endpoint(endpoint: Endpoint) {
-    let _ = SERVER_ENDPOINT.set(endpoint);
-}
-
-/// The server's iroh endpoint for dialing agents, if it was started with one.
-pub fn server_endpoint() -> Option<&'static Endpoint> {
-    SERVER_ENDPOINT.get()
 }
 
 pub fn set_relay_url(url: Option<String>) {

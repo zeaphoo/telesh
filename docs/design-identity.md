@@ -6,12 +6,12 @@
 P1 已实现：
 
 - 为 `accounts`、`account_keys`、`sessions` 提供 SQLite 持久化（`sqlx`）
-  （`crates/telesh-server/src/db.rs`）；默认 DB 为 `~/.telesh/server.sqlite`。
+  （`crates/telesh-server/src/db.rs`）；DB 固定在 `<dataroot>/server.sqlite`。
 - 密钥对挑战-应答登录 + 会话快速路径
   （`crates/telesh-server/src/control.rs`、`crates/telesh/src/auth.rs`）。
 - 随机 9 位数字 `account_id`，逐位生成；在网络上和注册表中它是补零后的句柄
   （例如 `"000012345"`），在下游各处取代自申报的 `agent_id`。
-- 可选的 `--enrollment-secret` 控制首次注册的准入。
+- 配置字段 `enrollment_secret` 控制首次注册的准入。
 - 会话令牌：不透明，以 SHA-256 存储，固定 12h TTL；
   由 agent 缓存在 v2 状态文件中，并在重连时出示。
 - 线协议：`Hello` 携带身份/会话，另有
@@ -114,7 +114,7 @@ agent                                          control server
 - 首次成功的密钥对登录会创建账户并绑定该密钥。
 - TOFU 在这里是安全的：没有他人私钥就无法占用其 `EndpointId`，
   因此不存在身份抢注。
-- 可选的 `--enrollment-secret`：设置后，首次登录还必须出示它，
+- 可选的 `enrollment_secret` 配置：设置后，首次登录还必须出示它，
   从而关闭开放注册，同时保持流程自助。
 - schema 支持每个账户多个密钥（多设备 / 轮换）；添加密钥的登录
   流程稍后推出（§13）。
@@ -160,7 +160,7 @@ agent                                          control server
 
 ## 8. 存储（sqlx + SQLite）
 
-- 服务端拥有一个 DB（`--db <path>`，环境变量 `TELESH_DB`；默认 `~/.telesh/server.sqlite`）。
+- 服务端拥有一个 DB,固定是 `<dataroot>/server.sqlite`(配置字段 `dataroot`,默认 `~/.telesh`)。
 - `sqlx` 使用 `runtime-tokio` + `sqlite` + `migrate`；连接池 = `SqlitePool`。
 - schema 由 `crates/telesh-server/migrations/` 中的 **sqlx migrations** 拥有
   （启动时执行 `sqlx::migrate!("./migrations")`；记录在 `_sqlx_migrations` 中）。
@@ -213,14 +213,15 @@ CREATE TABLE services (
 
 ## 10. 配置
 
-| 标志 | 环境变量 | 含义 |
-|---|---|---|
-| `--db <path>` | `TELESH_DB` | 服务端 SQLite 数据库 |
-| `--server-key <file>` | `TELESH_SERVER_KEY` | 用于服务令牌的持久 Ed25519 密钥 |
-| `--enrollment-secret <s>` | `TELESH_ENROLLMENT_SECRET` | 可选；关闭开放注册 |
+服务端只从 TOML 配置文件读配置,命令行只有一个参数(配置文件路径)。相关的字段:
 
-`TELESH_SECRET` / `visitor_secret` 已从数据面退役；即使仍然存在，
-也仅作为注册密钥（enrollment）保留。
+| 配置字段 | 含义 |
+|---|---|
+| `dataroot` | 数据根目录;数据库是 `<dataroot>/server.sqlite` |
+| `enrollment_secret` | 可选;关闭开放注册 |
+| `secret` / `lookup_secret` | 主密钥 / 查询密钥 |
+
+`visitor_secret` 已从数据面退役;主密钥现在只用于控制面登录与查询把关。
 
 ## 11. 安全
 

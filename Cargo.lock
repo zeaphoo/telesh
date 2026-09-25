@@ -4115,7 +4115,6 @@ dependencies = [
  "dashmap",
  "futures",
  "httparse",
- "iroh",
  "iroh-relay",
  "rand 0.8.8",
  "rust-embed",

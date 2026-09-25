@@ -1,0 +1,54 @@
+# telesh-server 配置示例。用法:
+#
+#     telesh-server /etc/telesh/server.toml
+#
+# 命令行只有这一个参数。下面每个字段都可以省略,省略即用注释里写的默认值。
+
+# 数据根目录:数据库、ACME 证书缓存等都放这里。默认 ~/.telesh。
+dataroot = "/var/lib/telesh"
+
+# agent 连控制面的地址。默认 0.0.0.0:9009。
+control_addr = "0.0.0.0:9009"
+
+# 边缘入口:公网 HTTP / TCP 从这里进来。默认 0.0.0.0:8080。
+ingress_addr = "0.0.0.0:8080"
+
+# 数据面:agent 主动连这里。默认 0.0.0.0:9008。
+data_addr = "0.0.0.0:9008"
+
+# dashboard(API + 前端 + /metrics)。默认 127.0.0.1:16456。
+dashboard_addr = "127.0.0.1:16456"
+
+# 拼隧道 URL 用的公网后缀。默认空。
+public_host = "example.com"
+
+# 主密钥:agent 登录必须带上。默认空(不校验)。
+# secret = "…"
+
+# 只用于查询的密钥,给 peer 用,避免扩散主密钥。默认空。
+# lookup_secret = "…"
+
+# 首次注册需要的密钥;设置后关闭开放注册。默认空。
+# enrollment_secret = "…"
+
+# TCP 隧道的端口范围。默认 "18000-18100"。
+tcp_port_range = "18000-18100"
+
+[relay]
+# 跑一个进程内的 iroh 中继。默认不跑。
+# serve = "0.0.0.0:8081"
+
+# 通告给 agent 的公网中继 URL。默认由 ACME 域名或 public_host 推导。
+# url = "https://relay.example.com"
+
+# 手动 TLS(HTTPS + QUIC 地址发现):
+# tls_cert   = "/etc/telesh/relay.crt"
+# tls_key    = "/etc/telesh/relay.key"
+# https_addr = "0.0.0.0:443"
+# quic_addr  = "0.0.0.0:7842"
+
+# ……或者 ACME/Let's Encrypt(优先于手动 TLS):
+# acme         = ["relay.example.com"]
+# acme_email   = "admin@example.com"
+# acme_staging = false
+# acme_cache   = "/var/lib/telesh/acme"

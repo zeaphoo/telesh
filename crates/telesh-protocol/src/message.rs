@@ -448,7 +448,6 @@ pub enum Frame {
     P2PLookup(P2PLookup),
     P2PAddr(P2PAddrResp),
     Lookup(LookupHello),
-    IrohReady(#[serde(with = "endpoint_addr")] EndpointAddr),
     Traffic(TrafficReport),
     TcpMapped(TcpMapped),
     AuthChallenge(AuthChallenge),

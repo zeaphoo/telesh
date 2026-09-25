@@ -100,7 +100,7 @@ agent                                                    control server
 - 签名载荷是**手工拼接**的,不是 JSON:`b"telesh-login-v1" ‖ server_id(32) ‖
   nonce(32) ‖ ts(u64 大端)`,Ed25519 签 64 字节。域分隔 + `server_id` 防跨服务器重放。
 - `nonce` 服务端随机、单次使用、短 TTL。
-- 首次成功登录建账号并绑定公钥(TOFU)。配置了 `--enrollment-secret` 时,首次登录必须
+- 首次成功登录建账号并绑定公钥(TOFU)。服务端配置了 `enrollment_secret` 时,首次登录必须
   同时带 `enrollment`,否则 `auth_error: enrollment_rejected`。
 
 ### 3.2 session 快路径
@@ -159,7 +159,6 @@ lookup{ auth_key?, agent_id }        # agent_id 只是日志用的临时标识
 | `p2p_announce_resp` | server → agent | `ok{name}` / `name_taken{name}` / `invalid_name{name}` | 每个名字的归属结果 |
 | `p2p_lookup` | peer → server | `account`, `name` | 解析目录项 |
 | `p2p_addr` | server → peer | `found{account,name,owner_name,addr,token?}` / `not_found` | 目录结果;也是订阅推送 |
-| `iroh_ready` | agent → server | `addr`(EndpointAddr) | 上报直连地址(地址变化会重发) |
 | `traffic` | agent → server | `name`, `up`, `down` | 服务端看不到的 P2P 流量计数 |
 | `tcp_mapped` | agent → server | `name`, `addr`, `local_port` | 路由器端口映射得到公网端点 |
 | `token_check` | agent → server | `id`, `account`, `name`, `token` | 请服务端校验不透明访问令牌 |

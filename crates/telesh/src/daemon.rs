@@ -131,12 +131,12 @@ async fn session(creds: &Credentials, shared: &Arc<Shared>) -> Result<()> {
             }
         },
         None => {
-            info!("server announced no data address; payload will require iroh");
+            info!("server announced no data address; http/tcp tunnels cannot be routed");
             None
         }
     };
 
-    // ---- iroh(edge 直连 + P2P 对等连接) ----
+    // ---- iroh(P2P 对等连接) ----
     let endpoint = match crate::p2p::build_endpoint(
         iroh::SecretKey::from_bytes(&creds.secret_key),
         hello.relay_url(),
@@ -161,12 +161,9 @@ async fn session(creds: &Credentials, shared: &Arc<Shared>) -> Result<()> {
             Some(account.clone()),
         ))
     });
-    // iroh 地址会在拿到 home relay 后变化:变了要重发 IrohReady,并且**重新
-    // announce 所有 P2P 服务**,否则目录里留着旧地址(对端连不上)。
+    // iroh 地址会在拿到 home relay 后变化:变了要**重新 announce 所有 P2P 服务**,
+    // 否则目录里留着旧地址(对端连不上)。
     let mut last_addr = endpoint.as_ref().map(|e| e.addr());
-    if let Some(addr) = &last_addr {
-        let _ = tx.send(Frame::IrohReady(addr.clone()));
-    }
 
     // ---- reconcile ----
     let mut applied: Vec<Applied> = Vec::new();
@@ -183,13 +180,12 @@ async fn session(creds: &Credentials, shared: &Arc<Shared>) -> Result<()> {
                 for t in crate::p2p::drain_traffic() {
                     let _ = tx.send(Frame::Traffic(t));
                 }
-                // iroh 地址变化 → 重发 IrohReady + 重新 announce P2P 服务。
+                // iroh 地址变化 → 重新 announce P2P 服务。
                 if let Some(ep) = &endpoint {
                     let addr = ep.addr();
                     if last_addr.as_ref() != Some(&addr) {
                         debug!(endpoint = %addr.id.fmt_short(), "iroh address changed, re-announcing");
                         last_addr = Some(addr.clone());
-                        let _ = tx.send(Frame::IrohReady(addr.clone()));
                         for a in applied.iter_mut() {
                             if let Entry::P2p { local_port, name } = &a.entry {
                                 a.state = State::Pending;

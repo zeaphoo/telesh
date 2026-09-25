@@ -219,9 +219,10 @@ iroh:  [kind][u16 cred_len][cred][u16 service_len][service] → [u8 ack]
 
 ## 14. 待定
 
-- **iroh 流的鉴权**:边车目前用 kind-0 共享密钥,而 daemon 给 `serve_endpoint` 传的是
-  `secret: None`,等于不校验;目标名又是可猜的本地端口。任何拿到 agent `EndpointAddr`
-  的人都能直连它已发布的目标,而发布一个 P2P 服务就会公开这个地址。建议让边车也改用
-  访问令牌(kind 1 + `token_check`),复用现成机制。
+- **iroh 流的鉴权**:`crates/telesh/src/p2p.rs` 的 `read_handshake` 现在两种凭证都收:
+  kind-1 访问令牌会拿去问服务端(`token_check`),kind-0 共享密钥只在 agent 配了密钥时
+  才比对。agent 侧没配密钥、目标名又恰好是可猜的本地端口,所以任何拿到 agent
+  `EndpointAddr` 的人都能直连它已发布的目标(发布一个 P2P 服务就会公开这个地址)。
+  建议把 kind-0 整个删掉,只留 kind-1 + `token_check`。
 - UI 是否允许非本机访问(目前只 bind `127.0.0.1`,倾向不做)。
-- `--secret` / `--lookup-secret` / `--enrollment-secret` 是否可以合并成一个开关。
+- 服务端配置文件里的 `secret` / `lookup_secret` / `enrollment_secret` 是否可以合并成一个。

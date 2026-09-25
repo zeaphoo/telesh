@@ -1,13 +1,43 @@
-//! Server runtime configuration (CLI args).
+//! 服务端配置。
+//!
+//! 命令行只有一个参数:配置文件路径。其余全部从这个 TOML 文件读,字段都
+//! 可以省略(省略即用默认值)。所有需要落盘的数据都在 `dataroot` 下。
+//!
+//! ```toml
+//! dataroot = "/var/lib/telesh"
+//! public_host = "example.com"
+//! secret = "…"
+//!
+//! [relay]
+//! serve = "0.0.0.0:8081"
+//! url   = "https://relay.example.com"
+//! ```
 
 use std::net::SocketAddr;
+use std::ops::RangeInclusive;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::OnceLock;
 
+use anyhow::Context;
 use clap::Parser;
-use std::ops::RangeInclusive;
-use std::str::FromStr;
+use serde::Deserialize;
 
-/// TCP port range for raw-TCP tunnels, e.g. `18000-18100`.
+use crate::relay_config::RelayConfig;
+
+/// 命令行:只有配置文件路径。
+#[derive(Debug, Parser)]
+#[command(
+    name = "telesh-server",
+    version,
+    about = "telesh tunnel server: control plane + edge ingress"
+)]
+pub struct Cli {
+    /// TOML 配置文件路径。
+    pub config: PathBuf,
+}
+
+/// TCP 隧道可用的端口范围,配置文件里写成 `"18000-18100"`。
 #[derive(Debug, Clone, Copy)]
 pub struct TcpPortRange {
     pub start: u16,
@@ -27,8 +57,8 @@ impl FromStr for TcpPortRange {
         let (a, b) = s
             .split_once('-')
             .ok_or_else(|| format!("expected START-END, got {s:?}"))?;
-        let start: u16 = a.parse().map_err(|_| format!("bad port {a:?}"))?;
-        let end: u16 = b.parse().map_err(|_| format!("bad port {b:?}"))?;
+        let start: u16 = a.trim().parse().map_err(|_| format!("bad port {a:?}"))?;
+        let end: u16 = b.trim().parse().map_err(|_| format!("bad port {b:?}"))?;
         if start > end {
             return Err(format!("start {start} > end {end}"));
         }
@@ -36,76 +66,130 @@ impl FromStr for TcpPortRange {
     }
 }
 
-/// telesh tunnel server: agents register a subdomain, the edge ingress routes
-/// Host header traffic over the WebSocket control plane to the right agent.
-#[derive(Debug, Clone, Parser)]
-#[command(name = "telesh-server", version, about)]
+impl<'de> Deserialize<'de> for TcpPortRange {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        TcpPortRange::from_str(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+/// 服务端配置。字段省略时用 [`Default`] 里的值。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
-    /// Address where agents dial the WebSocket control server (ws://.../tunnel).
-    #[arg(long, env = "TELESH_CTRL_ADDR", default_value = "0.0.0.0:9009")]
+    /// 数据根目录:数据库、证书缓存等都放这里。默认 `~/.telesh`。
+    pub dataroot: PathBuf,
+
+    /// agent 连控制面的地址(`ws://.../tunnel`)。
     pub control_addr: SocketAddr,
 
-    /// Address where the edge ingress listens for public TCP connections
-    /// (HTTP in the MVP; the Host header selects the tunnel).
-    #[arg(long, env = "TELESH_INGRESS_ADDR", default_value = "0.0.0.0:8080")]
+    /// 边缘入口监听公网连接(HTTP 用 Host 头选隧道,TCP 按端口)。
     pub ingress_addr: SocketAddr,
 
-    /// Optional public hostname suffix used when building tunnel URLs,
-    /// e.g. `example.com` -> `http://<sub>.example.com:<ingress-port>`.
-    /// Empty means the reported hostname is just the subdomain.
-    #[arg(long, env = "TELESH_PUBLIC_HOST", default_value = "")]
-    pub public_host: String,
-
-    /// Optional master secret. When set, agents must present the same key in
-    /// their `ClientHello`, otherwise the connection is rejected.
-    #[arg(long, env = "TELESH_SECRET", default_value = "")]
-    pub secret: String,
-
-    /// Optional separate secret for lookup-only peers, so they never need
-    /// the master secret. Servers configured with `--secret` still accept the
-    /// master secret from peers; when this is unset, peers must use it.
-    #[arg(long, env = "TELESH_LOOKUP_SECRET", default_value = "")]
-    pub lookup_secret: String,
-
-    /// SQLite database holding accounts, keys and sessions.
-    /// Defaults to `~/.telesh/server.sqlite`.
-    #[arg(long, env = "TELESH_DB")]
-    pub db: Option<String>,
-
-    /// Optional secret required on first registration. When set, open signup is
-    /// closed: an unknown key may not create an account without it.
-    #[arg(long, env = "TELESH_ENROLLMENT_SECRET", default_value = "")]
-    pub enrollment_secret: String,
-
-    /// Also run an embedded iroh relay on this address. TLS and ACME/Let's
-    /// Encrypt settings come from the relay config file
-    /// (`$TELESH_RELAY_CONFIG`, default `~/.telesh/relay.toml`).
-    #[arg(long, env = "TELESH_RELAY_SERVE")]
-    pub relay_serve: Option<SocketAddr>,
-
-    /// Public URL of the iroh relay announced to agents after login (and used
-    /// by the server's own gateway). When empty it is derived from the relay
-    /// config file's `url`, or from the embedded relay plus `--public-host`.
-    /// Leave it empty to keep agents on iroh's default (n0) relays.
-    #[arg(long, env = "TELESH_RELAY_URL", default_value = "")]
-    pub relay_url: String,
-
-    /// Address for the data plane: agents dial this and speak yamux over TCP.
-    /// Announced to agents in `server_hello.success.data_addr`; an agent
-    /// replaces an unspecified host (`0.0.0.0` / `::`) with the host it used
-    /// for the control connection.
-    #[arg(long, env = "TELESH_DATA_ADDR", default_value = "0.0.0.0:9008")]
+    /// 数据面地址:agent 主动连这里,yamux over TCP。
     pub data_addr: SocketAddr,
 
-    /// Port range for raw-TCP tunnels (e.g. 18000-18100). If the requested
-    /// port is outside this range the registration is rejected.
-    #[arg(long, value_parser = clap::value_parser!(TcpPortRange), env = "TELESH_TCP_RANGE", default_value = "18000-18100")]
+    /// dashboard(API + 前端 + /metrics)监听地址。默认只 bind 回环。
+    pub dashboard_addr: SocketAddr,
+
+    /// 拼隧道 URL 用的公网后缀,例如 `example.com` → `http://<sub>.example.com:8080`。
+    /// 空表示上报的 hostname 就只有子域。
+    pub public_host: String,
+
+    /// 主密钥。设置后 agent 登录必须带上它。
+    pub secret: String,
+
+    /// 只用于查询的密钥,让 peer 不必知道主密钥。为空时 peer 只能用主密钥查。
+    pub lookup_secret: String,
+
+    /// 首次注册需要的密钥。设置后关闭开放注册。
+    pub enrollment_secret: String,
+
+    /// TCP 隧道的端口范围,例如 `"18000-18100"`。
     pub tcp_port_range: TcpPortRange,
 
-    /// Address for the dashboard UI + API + /metrics. Defaults to loopback
-    /// so the admin surface is not exposed to the public ingress.
-    #[arg(long, env = "TELESH_DASHBOARD_ADDR", default_value = "127.0.0.1:16456")]
-    pub dashboard_addr: SocketAddr,
+    /// 中继相关配置;`serve` 为空表示不跑内嵌中继。
+    pub relay: RelayConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            dataroot: default_dataroot(),
+            control_addr: "0.0.0.0:9009".parse().expect("valid default"),
+            ingress_addr: "0.0.0.0:8080".parse().expect("valid default"),
+            data_addr: "0.0.0.0:9008".parse().expect("valid default"),
+            dashboard_addr: "127.0.0.1:16456".parse().expect("valid default"),
+            public_host: String::new(),
+            secret: String::new(),
+            lookup_secret: String::new(),
+            enrollment_secret: String::new(),
+            tcp_port_range: TcpPortRange {
+                start: 18000,
+                end: 18100,
+            },
+            relay: RelayConfig::default(),
+        }
+    }
+}
+
+impl Config {
+    /// 读配置文件。文件必须存在;字段可以省略。
+    pub fn load(path: &Path) -> anyhow::Result<Self> {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("cannot read config {}", path.display()))?;
+        let cfg: Config = toml::from_str(&text)
+            .with_context(|| format!("cannot parse config {}", path.display()))?;
+        Ok(cfg)
+    }
+
+    /// 数据库文件:`<dataroot>/server.sqlite`。
+    pub fn db_path(&self) -> PathBuf {
+        self.dataroot.join("server.sqlite")
+    }
+
+    /// ACME 证书缓存目录:`<dataroot>/acme`,除非配置文件里另指了地方。
+    pub fn acme_cache(&self) -> PathBuf {
+        self.relay
+            .acme_cache
+            .clone()
+            .unwrap_or_else(|| self.dataroot.join("acme"))
+    }
+
+    /// 通告给 agent 的中继 URL:`[relay] url` → ACME 域名 → `public_host` 加端口,
+    /// 都推不出来就是 `None`(agent 用 iroh 默认中继)。
+    pub fn advertised_relay_url(&self) -> Option<String> {
+        if let Some(url) = self.relay.advertised_url(&self.public_host) {
+            return Some(url);
+        }
+        if self.relay.serve.is_some() {
+            tracing::warn!(
+                "内嵌中继在跑,但不知道它的公网 URL;agent 会用 iroh 默认中继。\
+                 请在配置文件里设置 [relay] url 或 public_host。"
+            );
+        }
+        None
+    }
+
+    /// 启动时打一行配置摘要(不含密钥)。
+    pub fn log_summary(&self) {
+        tracing::info!(
+            dataroot = %self.dataroot.display(),
+            control = %self.control_addr,
+            ingress = %self.ingress_addr,
+            data = %self.data_addr,
+            dashboard = %self.dashboard_addr,
+            tcp_range = %format_args!("{}-{}", self.tcp_port_range.start, self.tcp_port_range.end),
+            public_host = %if self.public_host.is_empty() { "(none)" } else { &self.public_host },
+            embedded_relay = ?self.relay.serve,
+            "server config loaded"
+        );
+    }
+}
+
+fn default_dataroot() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    PathBuf::from(home).join(".telesh")
 }
 
 pub static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -116,4 +200,35 @@ pub fn init(config: Config) {
 
 pub fn config() -> &'static Config {
     CONFIG.get().expect("server config not initialized")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 示例配置文件必须能解析:字段名或取值写错会在这里炸。
+    #[test]
+    fn example_config_parses() {
+        let cfg: Config =
+            toml::from_str(include_str!("../server.toml.example")).expect("example parses");
+        assert_eq!(cfg.public_host, "example.com");
+        assert_eq!(cfg.tcp_port_range.inclusive(), 18000..=18100);
+        assert!(cfg.db_path().ends_with("server.sqlite"));
+        assert_eq!(cfg.acme_cache().file_name().unwrap(), "acme");
+    }
+
+    /// 字段名打错要报错,不能静默用默认值。
+    #[test]
+    fn unknown_field_is_rejected() {
+        assert!(toml::from_str::<Config>("ctrl_addr = \"0.0.0.0:1\"").is_err());
+    }
+
+    /// 只给 dataroot 也要能跑起来(其余全默认)。
+    #[test]
+    fn dataroot_alone_is_valid() {
+        let cfg: Config = toml::from_str("dataroot = \"/tmp/ts\"").expect("parses");
+        assert_eq!(cfg.control_addr.port(), 9009);
+        assert_eq!(cfg.data_addr.port(), 9008);
+        assert_eq!(cfg.db_path(), std::path::Path::new("/tmp/ts/server.sqlite"));
+    }
 }

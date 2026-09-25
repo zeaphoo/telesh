@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use telesh_server::{config, control, dashboard, data, gateway, ingress, relay_config, state, Config};
+use telesh_server::{config, control, dashboard, data, ingress, state, Cli, Config};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -16,50 +16,25 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let mut cfg = Config::parse();
-
-    // Relay configuration is loaded once: it decides both the embedded relay we
-    // run (if any) and the URL announced to clients after login. A broken file
-    // disables the embedded relay rather than silently serving plain HTTP.
-    let relay_file = match relay_config::load() {
-        Ok(f) => f,
-        Err(e) => {
-            tracing::error!("failed to load relay config: {e:#}");
-            if cfg.relay_serve.take().is_some() {
-                tracing::error!("not starting the embedded relay without its config");
-            }
-            relay_config::RelayConfigFile::default()
-        }
-    };
+    // 命令行只有一个参数:配置文件路径。
+    let cli = Cli::parse();
+    let cfg = Config::load(&cli.config)?;
+    let relay_url = cfg.advertised_relay_url();
+    cfg.log_summary();
     config::init(cfg.clone());
 
     state::init().await?;
 
     // Optional embedded iroh relay, for a fully self-hosted deployment. Kept
     // alive for the process lifetime; dropping it shuts the relay down.
-    let _embedded_relay = match cfg.relay_serve {
-        Some(addr) => start_embedded_relay(addr, &relay_file).await,
+    let _embedded_relay = match cfg.relay.serve {
+        Some(addr) => start_embedded_relay(addr, &cfg).await,
         None => None,
     };
 
-    // The relay clients are told to use; also the relay the gateway dials
-    // through, so both ends agree on the same relay URL.
-    let relay_url = relay_config::advertised_url(&cfg, &relay_file);
-    state::set_relay_url(relay_url.clone());
-
-    // Direct data plane: bind the iroh endpoint the ingress uses to reach
-    // agents. A failure here is non-fatal — ingress falls back to the relay.
-    if env_flag("TELESH_NO_IROH") {
-        tracing::info!("iroh gateway disabled (TELESH_NO_IROH); ingress will use the relay only");
-    } else {
-        let iroh_relay = relay_url.unwrap_or_default();
-        match gateway::build_endpoint(&iroh_relay).await {
-            Ok(endpoint) => state::set_server_endpoint(endpoint),
-            Err(e) => {
-                tracing::warn!("iroh gateway unavailable, ingress will use the relay only: {e:#}")
-            }
-        }
-    }
+    // The relay URL clients are told to use. `None` leaves them on iroh's
+    // default (n0) relays.
+    state::set_relay_url(relay_url);
 
     // Data plane: agents dial this and speak yamux over TCP. The bind address is
     // announced verbatim; an agent that sees an unspecified host (`0.0.0.0`/`::`)
@@ -100,14 +75,15 @@ async fn main() -> anyhow::Result<()> {
 
 /// Start the embedded iroh relay on `http_addr`.
 ///
-/// Plain HTTP by default. With TLS/ACME in the relay config file it also
+/// Plain HTTP by default. With TLS/ACME from the `[relay]` config it also
 /// serves HTTPS and opens the QUIC address-discovery port, which improves hole
 /// punching for clients behind the relay. The public URL announced to agents is
-/// resolved separately by [`relay_config::advertised_url`].
+/// resolved separately by [`Config::advertised_relay_url`].
 async fn start_embedded_relay(
     http_addr: SocketAddr,
-    file: &relay_config::RelayConfigFile,
+    cfg: &Config,
 ) -> Option<iroh_relay::server::Server> {
+    let file = &cfg.relay;
     let mut server_config = iroh_relay::server::ServerConfig::default();
     let mut relay = iroh_relay::server::RelayConfig::new(http_addr);
 
@@ -116,7 +92,7 @@ async fn start_embedded_relay(
             tracing::error!("relay config: `https_addr` is required with `acme`");
             return None;
         };
-        match build_acme_cert_config(file) {
+        match build_acme_cert_config(cfg) {
             Ok(cert) => {
                 let quic = file.quic_addr_or_default();
                 relay.tls = Some(iroh_relay::server::TlsConfig::new(https_addr, cert));
@@ -174,18 +150,9 @@ async fn start_embedded_relay(
     }
 }
 
-/// Whether an env var is set to a truthy value ("1"/"true"/"yes").
-fn env_flag(key: &str) -> bool {
-    matches!(
-        std::env::var(key).as_deref(),
-        Ok("1") | Ok("true") | Ok("yes")
-    )
-}
-
 /// Build the ACME/Let's Encrypt certificate config for the embedded relay.
-fn build_acme_cert_config(
-    file: &relay_config::RelayConfigFile,
-) -> anyhow::Result<iroh_relay::server::CertConfig> {
+fn build_acme_cert_config(cfg: &Config) -> anyhow::Result<iroh_relay::server::CertConfig> {
+    let file = &cfg.relay;
     let server_config_builder = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
@@ -200,9 +167,8 @@ fn build_acme_cert_config(
     } else {
         tracing::warn!("relay config has no `acme_email`; some ACME servers reject such accounts");
     }
-    if let Some(cache) = &file.acme_cache {
-        acme = acme.cache_path(cache.clone());
-    }
+    // 默认缓存到 <dataroot>/acme。
+    acme = acme.cache_path(cfg.acme_cache());
 
     Ok(iroh_relay::server::CertConfig::LetsEncrypt {
         acme_config: acme,

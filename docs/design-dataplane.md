@@ -46,8 +46,9 @@
                             stream 2, 4, 6, ... : server 为每条公网连接开一条,纯字节
 ```
 
-`open_stream()` 的顺序变为:iroh 直连(机会性,不变)→ 数据连接 → 拒绝该公网连接
-(HTTP 返回 503,裸 TCP 直接关闭)。控制 WebSocket 不再承载任何 payload。
+`open_stream()` 只有一条路:数据连接;agent 没连上来就拒绝该公网连接
+(HTTP 返回 503,裸 TCP 直接关闭)。控制 WebSocket 不再承载任何 payload,
+server 也不会主动去连 agent。
 
 角色划分:
 
@@ -196,11 +197,11 @@ stream 1 是信令流(§4),**永不承载 payload**;server 只为公网连接开
 | 文件 | 改动 |
 |---|---|
 | `crates/telesh-server/src/data.rs`(新增) | 数据端口监听、yamux driver、开流队列、信令流鉴权、数据连接注册 |
-| `crates/telesh-server/src/config.rs` | 新增 `--data-addr` / `TELESH_DATA_ADDR`(默认 `0.0.0.0:9008`) |
+| `crates/telesh-server/src/config.rs` | 新增 `data_addr` 配置(默认 `0.0.0.0:9008`) |
 | `crates/telesh-server/src/main.rs` | bind 数据端口、下发 `data_addr`、启动 acceptor |
 | `crates/telesh-server/src/state.rs` | `DATA_ADDR` 下发;删除 `ACTIVE_STREAMS`、`NEXT_STREAM_ID` |
 | `crates/telesh-server/src/registry.rs` | 数据连接表(`run_id` + 句柄);控制连接断开时一并关闭数据连接 |
-| `crates/telesh-server/src/ingress.rs` | `open_stream()` = iroh → 数据面 → 503;删掉旧 WS relay 路径;yumux 泵用 select + 显式 FIN |
+| `crates/telesh-server/src/ingress.rs` | `open_stream()` = 数据面 → 503;删掉旧 WS relay 路径;yamux 泵用 select + 显式 FIN |
 | `crates/telesh-server/src/control.rs` | 上报 `data_addr`;删掉 `Frame::Stream*` 的分发 |
 | `crates/telesh-server/src/tcp.rs` | 不变;公网 TCP 监听仍然调 `open_stream()` |
 | `crates/telesh/src/data.rs`(新增) | 数据连接客户端:dial、yamux、信令流(鉴权/保活)、accept payload 流、退避重连 |
@@ -267,8 +268,9 @@ Cargo 依赖:`yamux = "0.14"`;`tokio-util` 需要 `compat`(为了 `TcpStream::co
   慢重连不会顶掉更新的连接。
 - 控制连接断开:server 移除该 agent 及其 P2P 名字,并注销数据连接;agent 现有的
   `reconnect_loop!` 会把两者一起重建。
-- iroh 仍保留为机会性路径:HTTP/TCP ingress 先试 iroh 直连,失败再走数据连接。
-  `TELESH_NO_IROH=1` 时数据连接是唯一通路。
+- 公网 HTTP/TCP 的 payload 只有一条通路:agent 主动连上来的数据连接。agent 没连上
+  来时直接回 503 / 关闭。iroh 只用于 peer 直连被发布为 P2P 的目标,服务端不参与其
+  payload。
 
 ## 9. 编码与定界
 

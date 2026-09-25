@@ -1,18 +1,16 @@
 //! Edge ingress: accept public TCP connections, extract the routing key
 //! (HTTP Host header for http tunnels; port for raw-TCP tunnels), and pump
-//! bytes over the control plane.
+//! bytes over the agent's data connection.
 //!
-//! Both entry points share [`open_stream`], which allocates a stream, tells
-//! the owning agent to dial its local service (`Init`), and drives the
-//! bidirectional data loop.
+//! Both entry points share [`open_stream`], which opens a yamux stream on the
+//! connection the owning agent established and drives the bidirectional data
+//! loop.
 
 use std::io;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, warn};
-
-
 
 use crate::config::config;
 use crate::metrics;
@@ -64,11 +62,11 @@ async fn handle_socket(mut socket: TcpStream) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Allocate a path for `socket` and pump bytes to the owning agent.
+/// 把 `socket` 的字节转给拥有这条隧道的 agent。
 ///
-/// Order: direct iroh data plane (opportunistic) → agent-initiated data plane →
-/// refuse the public connection. `traffic_key` names the tunnel in metrics and
-/// also decides whether an error response makes sense (HTTP tunnels only).
+/// 只有一条路:用 agent 自己连上来的数据连接(`data.rs`)。agent 没连上来就
+/// 拒绝这条公网连接。`traffic_key` 用于 metrics,并决定要不要回一个错误响应
+/// (只有 HTTP 隧道回)。
 pub async fn open_stream(
     mut socket: TcpStream,
     agent_id: &str,
@@ -77,48 +75,6 @@ pub async fn open_stream(
 ) {
     let http = traffic_key.starts_with("http:");
 
-    // 1) iroh direct path.
-    if let Some(endpoint) = crate::state::server_endpoint() {
-        if let Some(addr) = registry().iroh_addr(agent_id) {
-            match crate::gateway::dial(endpoint, addr).await {
-                Ok((conn, mut send, mut recv)) => {
-                    // 两条传输的流首都用同一个目标字段编码:iroh 前导里的 service
-                    // 和数据面的目标头都是 agent 侧的目标(见 docs/design-dataplane.md §8)。
-                    if let Err(e) =
-                        crate::gateway::write_handshake(&mut send, &config().secret, target).await
-                    {
-                        debug!("iroh prelude failed, falling back to the data plane: {e:#}");
-                        drop(conn);
-                    } else {
-                        match crate::gateway::read_ack(&mut recv).await {
-                            Ok(crate::gateway::Ack::Ok) => {
-                                debug!(agent_id, key = %traffic_key, "routing over iroh");
-                                metrics::inc_conns();
-                                let (up, down) = crate::gateway::pump(socket, send, recv).await;
-                                metrics::add_traffic(&traffic_key, up, down);
-                                metrics::dec_conns();
-                                drop(conn);
-                                return;
-                            }
-                            Ok(crate::gateway::Ack::Refused) => {
-                                // Definitive: the agent could not serve it.
-                                debug!(agent_id, "agent refused iroh stream");
-                                drop(conn);
-                                return;
-                            }
-                            Err(e) => {
-                                debug!("iroh ack lost, falling back to the data plane: {e:#}");
-                                drop(conn);
-                            }
-                        }
-                    }
-                }
-                Err(e) => debug!("iroh dial failed, falling back to the data plane: {e:#}"),
-            }
-        }
-    }
-
-    // 2) Agent-initiated data plane.
     if let Some(handle) = registry().data_handle(agent_id) {
         match handle.open_stream(target).await {
             Ok(stream) => {
@@ -133,7 +89,7 @@ pub async fn open_stream(
         }
     }
 
-    // 3) No path to the agent.
+    // 没有通往 agent 的路径。
     warn!(agent_id, target, key = %traffic_key, "no data path for this agent");
     if http {
         let _ = write_error(&mut socket, "503", "Tunnel data path unavailable").await;

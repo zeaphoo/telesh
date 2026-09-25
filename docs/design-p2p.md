@@ -13,9 +13,9 @@
 ## 2. 架构
 
 ```text
-  telesh connect <name>            telesh-server                 telesh p2p <port>
-  (visitor)                        (control + directory +         (agent)
-                                    optional relay/gateway)
+  peer (UI 里的镜像)               telesh-server                 agent
+  (visitor)                        (control + directory +         (被访问方)
+                                    optional relay)
 
   1) WS Visitor + P2PLookup ──────► directory lookup
   2) ◄───────────────────────────── P2PAddr{ EndpointAddr }
@@ -24,7 +24,7 @@
        └── fallback → iroh relay (self-hosted or n0 default)
 
   HTTP/TCP ingress:
-  public client → server ingress ─(iroh dial, fallback WS)────► agent → local service
+  public client → server ingress ─(agent 主动连入的数据连接)──► agent → local service
 ```
 
 - **控制面**（WebSocket）：认证、子域名分配、P2P 目录，以及直连面地址通告。
@@ -45,7 +45,6 @@
 | `p2p_lookup` | peer 解析 `account/name` |
 | `p2p_addr` | 查询结果外加一个短期访问令牌；当某个名称被重新通告时，订阅者也会收到该推送 |
 | `lookup` | 仅查询连接的第一帧；不注册任何内容 |
-| `iroh_ready` | http/tcp agent 通告其直连面地址（变化时重新发送） |
 | `traffic` | 服务端无法观测到的 P2P 流量计数 |
 | `tcp_mapped` | 通过路由器端口映射获得的公网端点 |
 | `token_check` / `token_check_resp` | agent 请求服务端校验一个不透明访问令牌 |
@@ -95,17 +94,17 @@ telesh connect db  -l 5432
 
 ### 5.3 HTTP / 原始 TCP agent
 
-`client::run_once` 还会额外构建一个 iroh endpoint，使用 `ServerHello::Success` 中通告的 relay，并通过 `IrohReady` 通告它，在地址变化时重新通告（例如当家庭 relay 连上之后——通过 `watch_addr()` 观测到）。这不会阻塞隧道建立。
+agent 还会额外构建一个 iroh endpoint，使用 `ServerHello::Success` 中通告的 relay。被发布为 P2P 的每个目标在 `P2PAnnounce` 里带上这个地址；地址变化时（例如家庭 relay 连上之后——通过 `watch_addr()` 观测到）重新通告，目录里的旧地址才会被换掉。这不会阻塞隧道建立。
 
-服务端在注册表中按 `agent_id` 存储该地址。在入站时（`ingress::open_stream`），它首先尝试通过 iroh 拨号 agent；若出现任何失败（拨号错误、prelude 写入失败），则回退到原来的 WebSocket 多路复用中继路径（`open_stream_relay`）。
+公网 HTTP/TCP 的载荷**不**走 iroh：服务端只在 agent 主动连入的数据连接上开流，agent 没连上来时直接回 503 / 关闭。`ingress::open_stream` 只有这一条路。
 
 ## 6. 服务端
 
 - **目录**（`state::P2P_DIR`）：`"<account>/<name>" -> P2pEntry { account, name, endpoint_id, P2PAnnounce }`。名称**按账户划分命名空间**，因此两个账户可以都暴露 `web`。在账户内，一个名称**由其 `endpoint_id` 拥有**（一种密码学 peer 身份），并以原子方式认领：同一个 endpoint 可以重新认领/替换自己的条目（重连），不同的 endpoint 会被拒绝而不是覆盖所有者，被拒绝的认领**不会**推送给订阅者。当拥有该名称的 agent 的控制连接断开时，条目会被移除。
 - **查询连接**不会被注册：`handle_lookup` 只应答 `P2PLookup` 和 keepalive。
-- **网关**（`gateway.rs`）：服务端绑定自己的 iroh endpoint（临时身份，端口映射被禁用）并拨号 agent。用 `TELESH_NO_IROH=1` 禁用。
-- **内嵌中继**（`--relay-serve <addr>`）：运行一个进程内的 iroh 中继，因此自托管部署无需外部中继。默认是纯 HTTP；TLS 和 ACME/Let's Encrypt 来自中继配置文件（`$TELESH_RELAY_CONFIG`，默认 `~/.telesh/relay.toml`），该文件会启用 HTTPS 和 QUIC 地址发现端口。
-- **中继通告**：relay URL 会在握手期间通过 `ServerHello::Success` 推送给客户端，因此 agent 永远不需要为其配置。其解析顺序为：`--relay-url`/`TELESH_RELAY_URL`、中继配置文件的 `url`、由内嵌中继推导出的 URL（ACME 域名，或 `--public-host` 加上监听器的端口），然后是旧版的 `TELESH_RELAY` 环境变量。如果都不知道，客户端就停留在 iroh 的默认（n0）中继上。服务端自己的网关也使用同一个 URL，因此两端对中继的认知一致。
+- **服务端没有自己的 iroh endpoint**：公网载荷走数据连接（见 §5.3），服务端不需要主动连 agent。
+- **内嵌中继**（配置文件的 `[relay] serve`）：运行一个进程内的 iroh 中继，因此自托管部署无需外部中继。默认是纯 HTTP；TLS 和 ACME/Let's Encrypt 来自同一个配置文件的 `[relay]` 段（`tls_cert` / `tls_key` / `https_addr` / `quic_addr` / `acme` / `acme_email` / `acme_staging` / `acme_cache`），它们会启用 HTTPS 和 QUIC 地址发现端口。
+- **中继通告**：relay URL 会在握手期间通过 `ServerHello::Success` 推送给客户端，因此 agent 永远不需要为其配置。其解析顺序为：`[relay] url`、由内嵌中继推导出的 URL（ACME 域名，或 `public_host` 加上监听器的端口）。如果都不知道，客户端就停留在 iroh 的默认（n0）中继上。
 
 ## 7. 安全
 
@@ -134,7 +133,7 @@ telesh connect db  -l 5432
 - 每条 P2P 流都在 agent 中计数（`P2P_BYTES_SENT` / `P2P_BYTES_RECV`）。
 - `run_expose` 每 10s 发送一次带增量值的 `Traffic` 报告。
 - 服务端把它们记录为流量计数器中的 `p2p:<name>`，可在仪表盘和 `/metrics` 中查看。
-- 对于 HTTP/TCP iroh 网关路径，由服务端自己转发字节，并按通常的 `http:<sub>` / `tcp:<port>` 键计数。
+- 公网 HTTP/TCP 的字节由服务端在数据连接上转发,按通常的 `http:<sub>` / `tcp:<port>` 键计数。
 
 ## 10. 配置
 
@@ -142,30 +141,31 @@ Agent（全局标志）：
 
 | 标志 | 环境变量 | 含义 |
 |---|---|---|
-| `--state-file` | `TELESH_STATE` | 身份文件（iroh 密钥 + 缓存的会话） |
+| `<control-server>`（唯一的位置参数） | | 控制服务器地址,如 `srv:9009` |
+| `--state-file` | `TELESH_STATE` | 身份与会话文件(发布配置放在同目录) |
 | `--enroll <s>` | `TELESH_ENROLLMENT_SECRET` | 首次注册用的注册密钥 |
-| `--no-reconnect` | | 退出而不是重连 |
-| `--dashboard-addr` | `TELESH_INSPECTOR_ADDR` | 本地 inspector 地址 |
+| `--dashboard-addr` | `TELESH_INSPECTOR_ADDR` | 本地发布管理 UI 地址(默认 `127.0.0.1:16345`) |
 
 Agent 仅环境变量开关：`TELESH_NO_PORTMAP=1`（禁用 UDP 网关探测）。iroh 中继**不是** agent 的设置：由服务端在登录后通告。
 
-`telesh p2p`：`<PORT>` 或 `--expose NAME=PORT`（可重复）、`-s/--name`、`--map-tcp`。
-`telesh connect`：`<ACCOUNT/NAME>`、`-l/--local-port`。
+发布与镜像都在本地 UI 上配置,没有 `telesh p2p` / `telesh connect` 子命令。
 
-服务端：
+服务端**只有一个命令行参数**:配置文件路径(`telesh-server <config.toml>`)。其余全部从该
+TOML 文件读,字段都可以省略。示例见 `crates/telesh-server/server.toml.example`。
 
-| 标志 | 环境变量 | 含义 |
-|---|---|---|
-| `--secret <s>` | `TELESH_SECRET` | 主密钥（令牌签名 + 查询认证） |
-| `--lookup-secret <s>` | `TELESH_LOOKUP_SECRET` | 用于查询的较低权限密钥 |
-| `--db <path>` | `TELESH_DB` | 账户/会话 SQLite（默认 `~/.telesh/server.sqlite`） |
-| `--enrollment-secret <s>` | `TELESH_ENROLLMENT_SECRET` | 把关首次注册 |
-| `--relay-serve <addr>` | `TELESH_RELAY_SERVE` | 运行内嵌 iroh 中继 |
-| `--relay-url <url>` | `TELESH_RELAY_URL` | 通告给 agent（并由网关拨号）的 relay URL |
+| 配置字段 | 含义 |
+|---|---|
+| `dataroot` | 数据根目录(数据库、ACME 缓存等),默认 `~/.telesh` |
+| `control_addr` / `ingress_addr` / `data_addr` / `dashboard_addr` | 各监听地址 |
+| `public_host` | 拼隧道 URL 的公网后缀 |
+| `secret` / `lookup_secret` / `enrollment_secret` | 主密钥 / 查询密钥 / 注册密钥 |
+| `tcp_port_range` | TCP 隧道端口范围,例如 `"18000-18100"` |
+| `[relay] serve` | 运行内嵌 iroh 中继的地址 |
+| `[relay] url` | 通告给 agent 的 relay URL |
+| `[relay] tls_cert` / `tls_key` / `https_addr` / `quic_addr` | 手动 TLS |
+| `[relay] acme` / `acme_email` / `acme_staging` / `acme_cache` | ACME/Let's Encrypt |
 
-服务端仅环境变量开关：`TELESH_NO_IROH=1`（禁用直连数据面）；旧版的 `TELESH_RELAY` 仍作为 `--relay-url` 的回退被接受。
-
-内嵌中继的 TLS/ACME 来自中继配置文件（`$TELESH_RELAY_CONFIG`，默认 `~/.telesh/relay.toml`）：`url`（通告给 agent 的公网 URL）、`tls_cert`、`tls_key`、`https_addr`、`quic_addr`、`acme`、`acme_email`、`acme_staging`、`acme_cache`。
+数据库固定是 `<dataroot>/server.sqlite`,ACME 缓存默认 `<dataroot>/acme`。
 
 ## 11. 限制 / 未来工作
 

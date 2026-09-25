@@ -16,15 +16,13 @@ telesh-protocol = { path = "../telesh-protocol" }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
 sha2 = { workspace = true }
 toml = "0.8"
-# Direct data plane: the edge dials agents over iroh for HTTP/TCP ingress.
-iroh = { workspace = true }
-# Agent-initiated data plane: yamux over TCP + length-prefixed CBOR signalling.
+# 数据面:agent 主动连入,yamux over TCP + 带长度前缀的 CBOR 信令。
 yamux = { workspace = true }
 tokio-util = { workspace = true }
 bytes = { workspace = true }
-# Optional embedded relay (`--relay-serve`) for self-hosted deployments.
+# 可选的内嵌中继(`[relay] serve`),自托管部署用。
 iroh-relay = { version = "1.2", features = ["server"] }
-# TLS material loading for the embedded relay (`--relay-tls-cert`/`--relay-tls-key`).
+# 内嵌中继的 TLS 材料加载。
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
 rustls-pki-types = "1"
 tokio = { workspace = true }
