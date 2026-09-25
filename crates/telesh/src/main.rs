@@ -54,8 +54,8 @@ async fn main() -> Result<()> {
     std::fs::create_dir_all(&dataroot)
         .with_context(|| format!("cannot create dataroot {}", dataroot.display()))?;
 
-    // 配置文件是唯一的地址来源,没有命令行参数、也没有环境变量。
-    let cfg = config::Config::load(&dataroot)?;
+    // 配置文件是唯一的地址来源;不存在就自动写一份默认的(连本机 9009)。
+    let cfg = config::Config::load_or_create(&dataroot)?;
     let Some(control_addr) = cfg.control_server() else {
         anyhow::bail!(
             "{} 里没有 control_server;请写一行:`control_server = \"host:port\"`",

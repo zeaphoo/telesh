@@ -5,6 +5,8 @@
 //! ```toml
 //! control_server = "tunnel.example.com:9009"
 //! ```
+//!
+//! 文件不存在时自动创建一份,默认连本机 `127.0.0.1:9009`。
 
 use std::path::{Path, PathBuf};
 
@@ -13,6 +15,18 @@ use serde::Deserialize;
 
 /// 配置文件名(放在 dataroot 下)。
 pub const FILE_NAME: &str = "config.toml";
+
+/// 自动生成的配置里写的默认地址:本机控制面。
+pub const DEFAULT_CONTROL_SERVER: &str = "127.0.0.1:9009";
+
+/// 新配置文件的内容。
+const TEMPLATE: &str = "\
+# telesh agent 配置。文件不存在时会自动生成这一份。
+#
+# 要连的 control server,写 host:port(只写 host 时端口默认 9009;
+# 粘贴 ws://host:port/api/tunnel 也能认)。
+control_server = \"127.0.0.1:9009\"
+";
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -30,6 +44,23 @@ impl Config {
         let cfg: Config = toml::from_str(&text)
             .with_context(|| format!("cannot parse agent config {}", path.display()))?;
         Ok(cfg)
+    }
+
+    /// 读配置;文件不存在就先写一份默认的(连本机 9009)。
+    pub fn load_or_create(dataroot: &Path) -> Result<Self> {
+        let path = file_path(dataroot);
+        if !path.exists() {
+            std::fs::create_dir_all(dataroot)
+                .with_context(|| format!("cannot create dataroot {}", dataroot.display()))?;
+            std::fs::write(&path, TEMPLATE)
+                .with_context(|| format!("cannot write agent config {}", path.display()))?;
+            tracing::info!(
+                path = %path.display(),
+                server = DEFAULT_CONTROL_SERVER,
+                "created a default agent config"
+            );
+        }
+        Self::load(dataroot)
     }
 
     /// 地址规范化后的形式(`ws://…/api/tunnel` 这种粘贴也接受)。
@@ -101,5 +132,18 @@ mod tests {
         assert!(empty.control_server().is_none());
         // 字段名打错要报错。
         assert!(toml::from_str::<Config>("ctrl = \"srv:9009\"").is_err());
+    }
+
+    #[test]
+    fn creates_a_default_config_when_missing() {
+        let dir = std::env::temp_dir().join(format!("telesh-cfg-{}", rand::random::<u64>()));
+        let cfg = Config::load_or_create(&dir).expect("creates the file");
+        assert_eq!(cfg.control_server().unwrap(), DEFAULT_CONTROL_SERVER);
+        assert!(file_path(&dir).exists());
+        // 第二次读的是文件本身(改过的地址要被认)。
+        std::fs::write(file_path(&dir), "control_server = \"srv.example.com\"\n").unwrap();
+        let cfg = Config::load_or_create(&dir).unwrap();
+        assert_eq!(cfg.control_server().unwrap(), "srv.example.com:9009");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

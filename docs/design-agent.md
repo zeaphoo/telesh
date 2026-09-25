@@ -47,7 +47,8 @@ telesh --dataroot /etc/telesh     # 或指定数据目录
 ```
 
 - 地址只写 `host` 时端口默认 `9009`;粘贴 `ws://host:port/api/tunnel` 也认。
-- `config.toml` 里没有 `control_server` 就报错退出。
+- `config.toml` 不存在时**自动生成一份**,默认连本机 `127.0.0.1:9009`;文件存在但
+  没有 `control_server` 才报错退出。
 - 本地 UI 固定在 `http://127.0.0.1:16345`。
 - iroh 的 UDP 网关探测(portmapper)按 iroh 默认开启。
 - 示例见 `crates/telesh/config.toml.example`。
