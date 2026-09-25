@@ -27,7 +27,6 @@ pub struct Credentials {
     pub session: Option<Vec<u8>>,
     pub node_name: Option<String>,
     pub state_path: PathBuf,
-    pub no_portmap: bool,
 }
 
 /// 一条已提交给服务端(或已在本地运行)的条目。
@@ -145,7 +144,7 @@ async fn session(creds: &Credentials, shared: &Arc<Shared>) -> Result<()> {
     let endpoint = match crate::p2p::build_endpoint(
         iroh::SecretKey::from_bytes(&creds.secret_key),
         hello.relay_url(),
-        creds.no_portmap,
+
     )
     .await
     {
@@ -451,7 +450,6 @@ async fn reconcile(
                     name,
                     local: addr,
                     auth: peer_auth.clone(),
-                    no_portmap: true,
                     retry_wait: Duration::from_secs(30),
                 };
                 let port = *local_port;

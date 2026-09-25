@@ -241,7 +241,7 @@ CREATE TABLE services (
 | `ClientHello.auth_key` | 挑战-应答 / 会话令牌 |
 | `name` 目录（全局） | `(account_id, name)` 命名空间化 |
 | HMAC 服务令牌 | Ed25519 服务端签名令牌 |
-| `--state-file` 32 字节 `secret_key` | 不变：agent 的 Ed25519 身份 |
+| `--state-file` 32 字节 `secret_key` | 不变(位置固定在 `~/.telesh/state`):agent 的 Ed25519 身份 |
 
 旧状态文件仍然可用（密钥即身份）；agent 的首次 v2 登录
 会创建/绑定其账户。

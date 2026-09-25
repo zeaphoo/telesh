@@ -59,11 +59,8 @@ impl AgentState {
     }
 }
 
-/// Default state file: `$TELESH_STATE` or `~/.telesh/state`, else cwd.
+/// 身份/会话文件的固定位置:`~/.telesh/state`;没有 HOME 时退到当前目录。
 pub fn default_path() -> PathBuf {
-    if let Ok(p) = std::env::var("TELESH_STATE") {
-        return PathBuf::from(p);
-    }
     if let Ok(home) = std::env::var("HOME") {
         return PathBuf::from(home).join(".telesh").join("state");
     }

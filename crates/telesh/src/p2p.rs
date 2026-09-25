@@ -23,7 +23,7 @@ use dashmap::DashMap;
 
 use anyhow::{anyhow, bail, Context, Result};
 use futures::{SinkExt, StreamExt};
-use iroh::endpoint::{presets, Connection, PortmapperConfig, RecvStream, SendStream};
+use iroh::endpoint::{presets, Connection, RecvStream, SendStream};
 use iroh::{Endpoint, EndpointAddr, RelayMode, SecretKey};
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
@@ -110,7 +110,6 @@ pub struct ConnectOptions {
     pub local: SocketAddr,
     /// 镜像那条 lookup 连接用的身份。
     pub auth: PeerAuth,
-    pub no_portmap: bool,
     /// How long to hold an accepted local connection while the P2P link
     /// recovers, retrying the stream setup (never after payload flows).
     pub retry_wait: Duration,
@@ -155,7 +154,7 @@ pub async fn run_connect(opts: &ConnectOptions) -> Result<()> {
     if let Some(url) = &relay {
         info!(relay = %url, "using server-announced iroh relay");
     }
-    let endpoint = build_endpoint(SecretKey::generate(), relay.as_deref(), opts.no_portmap).await?;
+    let endpoint = build_endpoint(SecretKey::generate(), relay.as_deref()).await?;
 
     // Supervisor: maintains one live connection to the latest address.
     let supervisor = tokio::spawn(supervisor(endpoint, info_rx.clone(), conn_tx));
@@ -373,11 +372,7 @@ async fn subscribe(
 }
 
 /// Build an iroh endpoint with the telesh ALPN and (optional) custom relay.
-pub(crate) async fn build_endpoint(
-    secret: SecretKey,
-    relay: Option<&str>,
-    no_portmap: bool,
-) -> Result<Endpoint> {
+pub(crate) async fn build_endpoint(secret: SecretKey, relay: Option<&str>) -> Result<Endpoint> {
     let mut builder = Endpoint::builder(presets::Minimal)
         .secret_key(secret)
         .alpns(vec![ALPN.to_vec()]);
@@ -390,9 +385,6 @@ pub(crate) async fn build_endpoint(
         }
         None => builder.relay_mode(RelayMode::Default),
     };
-    if no_portmap {
-        builder = builder.portmapper_config(PortmapperConfig::Disabled);
-    }
     builder.bind().await.context("failed to bind iroh endpoint")
 }
 

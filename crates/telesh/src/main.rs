@@ -18,35 +18,19 @@ mod publish;
 mod state;
 mod token_check;
 
-use std::net::SocketAddr;
-use std::path::PathBuf;
 use anyhow::Result;
 use clap::Parser;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-/// 读一个布尔环境变量("1"/"true"/"yes")。
-fn env_flag(key: &str) -> bool {
-    matches!(
-        std::env::var(key).as_deref(),
-        Ok("1") | Ok("true") | Ok("yes")
-    )
-}
+/// 本地发布管理 UI 的地址(固定,不对外)。
+const UI_ADDR: &str = "127.0.0.1:16345";
 
 #[derive(Debug, Parser)]
 #[command(name = "telesh", version, about = "暴露本地端口:常驻 agent + 本地发布管理 UI")]
 struct Cli {
     /// 控制服务器地址,如 `srv:9009`。
-    control_server: Option<String>,
-
-    /// 身份与会话文件(identity + session;publish 配置放在同目录)。
-    #[arg(long, global = true, env = "TELESH_STATE")]
-    state_file: Option<PathBuf>,
-
-    /// 本地发布管理 UI 的监听地址。
-    #[arg(long, global = true, env = "TELESH_INSPECTOR_ADDR", default_value = "127.0.0.1:16345")]
-    dashboard_addr: SocketAddr,
-
+    control_server: String,
 }
 
 #[tokio::main]
@@ -58,7 +42,8 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    let state_path = cli.state_file.clone().unwrap_or_else(state::default_path);
+    // 身份/会话文件固定在 <home>/.telesh/state;publish 配置放在同一目录。
+    let state_path = state::default_path();
 
     let state = match state::load(&state_path) {
         Ok(s) => s,
@@ -72,7 +57,7 @@ async fn main() -> Result<()> {
     inspect::init();
     publish::set_state_path(state_path.clone());
     {
-        let addr = cli.dashboard_addr;
+        let addr: std::net::SocketAddr = UI_ADDR.parse().expect("valid UI address");
         tokio::spawn(async move {
             if let Err(e) = inspect::serve_dashboard(addr).await {
                 warn!("inspector dashboard exited: {e:#}");
@@ -80,17 +65,14 @@ async fn main() -> Result<()> {
         });
     }
 
-    let Some(control_addr) = cli.control_server.clone() else {
-        anyhow::bail!("用法:telesh <control-server>,例如 `telesh srv:9009`");
-    };
+    let control_addr = cli.control_server;
     let creds = daemon::Credentials {
         control_addr: control_addr.clone(),
         secret_key: state.secret_key,
         session: state.live_session(),
         node_name: state.name.clone(),
         state_path,
-        no_portmap: env_flag("TELESH_NO_PORTMAP"),
     };
-    info!(server = %control_addr, ui = %cli.dashboard_addr, "telesh agent starting");
+    info!(server = %control_addr, ui = UI_ADDR, "telesh agent starting");
     daemon::run(creds).await
 }

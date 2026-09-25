@@ -34,9 +34,13 @@ telesh <control-server>          # 唯一的必需参数
 
 | 参数 | 说明 |
 |---|---|
-| `<control-server>` | 唯一必需参数,控制服务器 `host:port` |
-| `--state-file` | 身份 + 会话(现状保留) |
-| `--dashboard-addr` | 本地 UI 地址,默认 `127.0.0.1:16345` |
+| `<control-server>` | **唯一参数**,控制服务器 `host:port` |
+
+没有别的开关,也没有环境变量:
+
+- 身份/会话文件固定在 `~/.telesh/state`,`publish.json` 放在同一目录。
+- 本地 UI 固定在 `http://127.0.0.1:16345`。
+- iroh 的 UDP 网关探测(portmapper)按 iroh 默认开启。
 
 进程内同时持有两种角色:
 

@@ -80,7 +80,7 @@ telesh connect db  -l 5432
 ### 5.1 `telesh p2p <port>` / `--expose NAME=PORT`（暴露）
 
 1. 加载已持久化的 `SecretKey`。
-2. 构建一个 iroh `Endpoint`（ALPN `telesh/p2p/1`），使用服务端在 `ServerHello::Success` 中通告的 relay URL；端口映射（`TELESH_NO_PORTMAP`）是仅剩的本地环境变量开关。
+2. 构建一个 iroh `Endpoint`（ALPN `telesh/p2p/1`），使用服务端在 `ServerHello::Success` 中通告的 relay URL；端口映射按 iroh 默认开启。
 3. 打开 WebSocket 控制连接，并为每个服务通告一个 `P2PAnnounce`（全部共享同一个 endpoint 地址）。服务端按名称回复 `P2PAnnounceResp`；已被*另一个* endpoint 拥有的名称会被拒绝（`NameTaken`），agent 会显式退出，而不是悄悄地以一个过期身份继续提供服务。
 4. 接受 iroh 连接：每个入站双向流都会被认证（§7），请求的服务名被解析为本地端口，然后转发字节。
 5. 保持控制连接存活（keepalive + 按服务的 `Traffic`）。
@@ -122,7 +122,7 @@ agent 还会额外构建一个 iroh endpoint，使用 `ServerHello::Success` 中
 
 两件不同的事：
 
-1. **iroh portmapper**（默认开启）：通过 UPnP/PCP/NAT-PMP 映射 endpoint 的 UDP 端口，以改善直连性。`TELESH_NO_PORTMAP=1` 会禁用它（避免 SSDP 探测 / 防火墙提示）。
+1. **iroh portmapper**（默认开启）：通过 UPnP/PCP/NAT-PMP 映射 endpoint 的 UDP 端口，以改善直连性。（会触发 SSDP 探测 / 防火墙提示,现在没有开关可以关掉它）。
 2. **`telesh p2p --map-tcp`**：请求本地网关映射所暴露的 TCP 端口，使服务*无需* iroh 或服务端即可被公网访问。得到的 `IP:port` 会被记录日志，并通过 `TcpMapped` 上报。在 CGNAT、UPnP 被禁用等情况下会失败，此时隧道继续走 iroh。
 
 `portmapper` 被 (2) 直接使用；iroh 在内部将其用于 (1)。注意 iroh 内置的 portmapper 只映射它自己的 UDP 端口，而不映射任意 TCP 端口。
@@ -140,13 +140,12 @@ agent 还会额外构建一个 iroh endpoint，使用 `ServerHello::Success` 中
 
 Agent（全局标志）：
 
-| 标志 | 环境变量 | 含义 |
-|---|---|---|
-| `<control-server>`（唯一的位置参数） | | 控制服务器地址,如 `srv:9009` |
-| `--state-file` | `TELESH_STATE` | 身份与会话文件(发布配置放在同目录) |
-| `--dashboard-addr` | `TELESH_INSPECTOR_ADDR` | 本地发布管理 UI 地址(默认 `127.0.0.1:16345`) |
+| 参数 | 含义 |
+|---|---|
+| `<control-server>` | 唯一参数:控制服务器地址,如 `srv:9009` |
 
-Agent 仅环境变量开关：`TELESH_NO_PORTMAP=1`（禁用 UDP 网关探测）。iroh 中继**不是** agent 的设置：由服务端在登录后通告。
+没有别的开关,也没有环境变量:身份/会话固定在 `~/.telesh/state`(发布配置同目录),
+本地 UI 固定在 `127.0.0.1:16345`。iroh 中继**不是** agent 的设置:由服务端在登录后通告。
 
 发布与镜像都在本地 UI 上配置,没有 `telesh p2p` / `telesh connect` 子命令。
 
