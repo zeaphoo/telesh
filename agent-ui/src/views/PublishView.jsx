@@ -114,7 +114,7 @@ function PortRow({ port, process, hint, selected, onSelect }) {
   )
 }
 
-/** 端口与服务:对外发布 + 远程连接。所有操作即时生效。 */
+/** 发布和连接:对外发布 + 远程连接。所有操作即时生效。 */
 export default function PublishView() {
   const { t } = useTranslation()
   const { t: tc } = useTranslation('common')

@@ -1,7 +1,7 @@
 {
   "title": "telesh",
   "nav": {
-    "publish": "端口与服务",
+    "publish": "发布和连接",
     "log": "请求追踪",
     "account": "账户"
   },

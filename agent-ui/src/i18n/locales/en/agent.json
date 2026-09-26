@@ -1,7 +1,7 @@
 {
   "title": "telesh",
   "nav": {
-    "publish": "Ports & services",
+    "publish": "Publish & connect",
     "log": "Request tracing",
     "account": "Account"
   },

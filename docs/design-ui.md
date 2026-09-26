@@ -309,7 +309,7 @@ server.overview.agentsOnline  server.tunnels.empty
 | `common.status.error` | 错误 | Error |
 | `common.status.targetGone` | 目标已消失 | Target gone |
 | `common.status.notListening` | 未监听 | Not listening |
-| `agent.nav.publish` | 端口与服务 | Ports & services |
+| `agent.nav.publish` | 发布和连接 | Publish & connect |
 | `agent.nav.log` | 请求追踪 | Request tracing |
 
 ### 6.6 防遗漏
@@ -404,14 +404,13 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
 
 ### 9.1 外壳
 
-与 server-ui 同款外壳(导航在顶部 navbar,无侧边栏),导航三项(端口与服务 / 请求追踪 / 账户),
+与 server-ui 同款外壳(导航在顶部 navbar,无侧边栏),导航三项(发布和连接 / 请求追踪 / 账户),
 品牌区为 `SquareTerminal` 图标 + “telesh”;账户、连接状态与隧道信息放在 navbar 右侧。
 
-### 9.2 端口与服务(即时生效,无保存按钮)
+### 9.2 发布和连接(即时生效,无保存按钮)
 
-本页就两个区块、对应三个操作;agent-ui 三个页面都靠导航标识位置、**不再有页面标题**;
-所有操作**立即 PUT** 生效,
-无“保存并应用”/dirty/`beforeunload`;弹窗统一 `sm:max-w-3xl`(必须带 `sm:` 才能覆盖 shadcn 自带的 `sm:max-w-sm`)。
+本页就两个区块、对应三个操作;agent-ui 三个页面都靠导航标识位置、**不再有页面标题**。所有操作
+**立即 PUT** 生效,无“保存并应用”/dirty/`beforeunload`;弹窗统一 `sm:max-w-3xl`(必须带 `sm:` 才能覆盖 shadcn 自带的 `sm:max-w-sm`)。
 
 - **区块一 · 对外发布**:发到公网(HTTP 子域 / 公网 TCP)。header 右侧是 `已发布 N` + `发布端口` 按钮;
   未配置时只显示一句空态,**不渲染空表格**;有内容时列 端口 / 目标 / 状态 / 操作。
@@ -474,7 +473,7 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
 ## 12. 分阶段落地
 
 > **已完成**:P0(shadcn 4.x、主题、i18n)、P1(navbar 外壳、基础组件、文案抽取)、
-> P2(agent-ui 即时发布 + 发布对话框;server-ui 骨架屏)、P3 分项(账户/登录状态、端口与服务改版)。
+> P2(agent-ui 即时发布 + 发布对话框;server-ui 骨架屏)、P3 分项(账户/登录状态、发布和连接改版)。
 > 验证:两个 app `pnpm build`;无头 Chromium 根/子路由 × zh/en × 浅/深色;CDP 真实点击。
 
 | 阶段 | 内容 | 产出 |
