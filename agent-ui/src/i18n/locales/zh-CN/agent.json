@@ -1,7 +1,7 @@
 {
   "title": "telesh",
   "nav": {
-    "publish": "端口与发布",
+    "publish": "端口与服务",
     "log": "请求日志",
     "account": "账户"
   },
@@ -35,12 +35,12 @@
     }
   },
   "publish": {
-    "title": "已发布的端口",
-    "description": "发布与取消发布立即生效。",
     "add": "发布端口",
-    "count": "{{n}} 个已发布",
-    "empty": "还没有发布任何端口。",
-    "publishError": "发布接口错误: {{error}}",
+    "publishTitle": "对外发布",
+    "publishDesc": "把本机端口发布到公网:HTTP 子域或公网 TCP 端口。",
+    "none": "还没有对外发布任何端口。",
+    "noneHint": "点「发布端口」选择本机端口。",
+    "publishError": "接口错误: {{error}}",
     "targetAuto": "自动分配",
     "detectedHttp": "检测到 HTTP",
     "added": "已发布",
@@ -51,6 +51,11 @@
       "target": "目标",
       "status": "状态",
       "actions": "操作"
+    },
+    "summary": {
+      "published": "已发布 {{n}}",
+      "mirrors": "镜像 {{n}}",
+      "p2p": "P2P:{{mode}}"
     },
     "dialog": {
       "title": "发布端口",
@@ -63,17 +68,18 @@
       "confirm": "发布",
       "placeholders": {
         "subDomain": "子域,留空随机",
-        "remotePort": "公网端口,留空分配",
-        "name": "服务名"
+        "remotePort": "公网端口,留空分配"
       }
     },
+    "remoteTitle": "远程连接与 P2P",
+    "remoteDesc": "把远端服务镜像到本地端口,并控制哪些本地端口允许被远端 P2P 直连。",
     "mirrors": {
-      "title": "镜像远端服务",
-      "description": "把远端服务镜像到本地端口:填写 ACCOUNT/NAME 与本地监听端口后加入列表。这条连接用本机 agent 自己的身份登录服务端,不需要额外密钥。",
+      "title": "连接远程端口",
+      "desc": "把远端服务(ACCOUNT/NAME)镜像到本地监听端口。",
       "remotePlaceholder": "ACCOUNT/NAME",
       "localPortPlaceholder": "本地端口",
-      "add": "加入列表",
-      "empty": "尚未添加镜像。",
+      "add": "连接",
+      "empty": "还没有连接任何远程端口。",
       "columns": {
         "remote": "远端服务",
         "localPort": "本地端口",
@@ -81,9 +87,22 @@
       },
       "warnRemote": "请填写远端服务 ACCOUNT/NAME",
       "warnPort": "请填写有效的本地端口 (1-65535)",
-      "warnDuplicate": "本地端口 {{port}} 已在镜像列表中",
-      "added": "已添加镜像",
-      "removed": "已移除镜像"
+      "warnDuplicate": "本地端口 {{port}} 已存在",
+      "added": "已添加",
+      "removed": "已移除"
+    },
+    "p2p": {
+      "title": "P2P 入站规则",
+      "desc": "哪些本地端口允许被远端 peer 通过 P2P 直连(服务名 = 端口号)。",
+      "all": "全部端口",
+      "selected": "选择端口",
+      "none": "不允许",
+      "allHint": "当前 {{n}} 个在监听的本地端口会暴露给 P2P。",
+      "selectedHint": "已选择 {{n}} 个端口。",
+      "noneHint": "所有 P2P 入站都会被拒绝。",
+      "noPorts": "没有在监听的本地端口。",
+      "offlinePorts": "未监听但仍在规则里:{{ports}}",
+      "saved": "P2P 规则已更新"
     }
   },
   "log": {

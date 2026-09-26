@@ -56,6 +56,14 @@ pub async fn run(creds: Credentials) -> Result<()> {
         Ok(_) => {}
         Err(e) => warn!("cannot load the publish configuration: {e:#}"),
     }
+    // P2P 入站规则(文件不存在时会把旧的显式 P2P 条目迁移成「选定端口」)。
+    match publish::load_policy(&creds.state_path) {
+        Ok(policy) => {
+            info!(mode = ?policy.mode, ports = policy.ports.len(), "loaded the P2P policy");
+            shared.set_p2p_policy(policy);
+        }
+        Err(e) => warn!("cannot load the P2P policy: {e:#}"),
+    }
 
     let mut backoff = Duration::from_secs(1);
     loop {
@@ -316,6 +324,39 @@ fn apply_p2p_resp(resp: P2PAnnounceResp, applied: &mut [Applied]) {
     }
 }
 
+/// 生效的期望状态 = UI 的配置(去掉 P2P 条目)+ 由 P2P 入站规则推导出的 P2P 条目。
+fn effective_desired(shared: &Arc<Shared>) -> Vec<Entry> {
+    let policy = shared.p2p_policy();
+    let mut desired: Vec<Entry> = shared
+        .desired()
+        .into_iter()
+        .filter(|e| !matches!(e, Entry::P2p { .. }))
+        .collect();
+
+    let ports: Vec<u16> = match policy.mode {
+        publish::P2pMode::None => Vec::new(),
+        publish::P2pMode::Selected => policy.ports.clone(),
+        publish::P2pMode::All => {
+            let mut seen = std::collections::BTreeSet::new();
+            shared
+                .ports()
+                .into_iter()
+                .filter(|p| seen.insert(p.port))
+                .map(|p| p.port)
+                .collect()
+        }
+    };
+    desired.extend(
+        ports
+            .into_iter()
+            .map(|port| Entry::P2p {
+                local_port: port,
+                name: port.to_string(),
+            }),
+    );
+    desired
+}
+
 /// 让实际状态收敛到配置:先撤销不再需要的,再发布新的。
 async fn reconcile(
     applied: &mut Vec<Applied>,
@@ -325,7 +366,7 @@ async fn reconcile(
     next_id: &mut u64,
     peer_auth: &crate::p2p::PeerAuth,
 ) {
-    let desired = shared.desired();
+    let desired = effective_desired(shared);
 
     // ---- 撤销 ----
     let mut i = 0;
@@ -545,4 +586,50 @@ pub fn set_control_addr(addr: &str) {
 
 fn shared_control_addr() -> String {
     CONTROL_ADDR.get().cloned().unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// P2P 入站规则如何展开成 P2P 条目(服务名 = 端口号),同时不动别的东西。
+    #[test]
+    fn p2p_policy_expands_into_entries() {
+        let shared = publish::shared();
+        shared.set_ports(Vec::new());
+        shared.set_desired(vec![Entry::Http {
+            local_port: 3000,
+            sub_domain: None,
+        }]);
+
+        // none:一条 P2P 都不发,HTTP 条目保留。
+        shared.set_p2p_policy(publish::P2pPolicy {
+            mode: publish::P2pMode::None,
+            ports: vec![8080],
+        });
+        let d = effective_desired(shared);
+        assert_eq!(d.len(), 1);
+        assert!(matches!(d[0], Entry::Http { .. }));
+
+        // selected:按 ports 生成 P2P 条目,名字就是端口号。
+        shared.set_p2p_policy(publish::P2pPolicy {
+            mode: publish::P2pMode::Selected,
+            ports: vec![8080, 9090],
+        });
+        let d = effective_desired(shared);
+        assert_eq!(d.len(), 3);
+        assert!(d
+            .iter()
+            .any(|e| matches!(e, Entry::P2p { local_port: 8080, name } if name == "8080")));
+        assert!(d
+            .iter()
+            .any(|e| matches!(e, Entry::P2p { local_port: 9090, name } if name == "9090")));
+
+        // all:没有监听端口时不会凭空生成。
+        shared.set_p2p_policy(publish::P2pPolicy {
+            mode: publish::P2pMode::All,
+            ports: vec![],
+        });
+        assert_eq!(effective_desired(shared).len(), 1);
+    }
 }

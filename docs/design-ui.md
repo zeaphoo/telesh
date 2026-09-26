@@ -409,16 +409,17 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
 与 server-ui 同款外壳(导航在顶部 navbar,无侧边栏),导航两项(端口与发布 / 请求日志),
 品牌区为 `SquareTerminal` 图标 + “telesh”;连接状态与隧道信息放在 navbar 右侧。
 
-### 9.2 端口与发布(即时生效,无保存按钮)
+### 9.2 端口与服务(即时生效,无保存按钮)
 
-所有操作**立即 PUT `/api/publish`**,没有“保存并应用”、dirty 状态与 `beforeunload`。
+页面分两个区块、对应三个操作;所有操作**立即 PUT** 生效,无“保存并应用”/dirty/`beforeunload`。
 
-- **主表只列已发布的端口**,列:端口 / 目标 / 状态 / 操作(无发布方式下拉列)。
-  目标取自配置(HTTP 子域 / TCP 公网端口 / P2P 服务名),留空显示“自动分配”。
-- 每行“取消发布”立即生效,`sonner` toast 反馈。
-- **发布走对话框**(页面右上“发布端口”):列出本机监听端口(按端口去重、**排除已发布**),
-  选中后选方式(HTTP / TCP / P2P)+ 参数;P2P 未填服务名时禁用确认;确认即 PUT 并关闭。
-- 远端镜像独立卡片,加入 / 移除均立即生效;探测到的 HTTP 在端口列表里用 `StatusBadge` 标记。
+- **区块一 · 对外发布**:本机端口发到公网(HTTP 子域 / 公网 TCP)。未配置时只显示一句空态,
+  **不渲染空表格**;有内容时列 端口 / 目标 / 状态 / 操作。新增走对话框(排除已发布端口)。
+- **区块二 · 远程连接与 P2P**:
+  - *连接远程端口*:填 `ACCOUNT/NAME` + 本地端口,立即生效(镜像)。
+  - *P2P 入站规则*:`全部端口 / 选择端口 / 不允许`,决定哪些本地端口可被远端 P2P 直连
+    (服务名 = 端口号);存 `<dataroot>/p2p.json`,daemon 展开成 P2P 条目(见 §11)。
+- 顶部仅在有配置时显示一行概览(已发布 N / 镜像 N / P2P 模式),否则整行隐藏。
 
 ### 9.3 请求日志
 
@@ -446,8 +447,7 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
 
 ## 10. 无障碍、动效与元信息
 
-- 所有可交互元素 `:focus-visible` 用 `--ring`(shadcn base 层已含)。
-- Tabs/Sidebar 用 Radix 自带的 roving focus;`sheet`/`dialog` 自带焦点陷阱与 `aria-modal`。
+- 所有可交互元素 `:focus-visible` 用 `--ring`;Tabs 用 Radix roving focus,`sheet`/`dialog` 自带焦点陷阱与 `aria-modal`。
 - 表格 `<th scope="col">`;数字列 `tabular-nums`。
 - 状态除颜色外加圆点/图标/文案;同步与保存结果用 `aria-live="polite"`。
 - `prefers-reduced-motion: reduce` 下把 `tw-animate-css` 的动画降为 0。
@@ -460,6 +460,7 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
 | 项 | 说明 | 优先级 |
 |---|---|---|
 | ~~`GET /api/account`~~ ✅ | agent 的登录状态 + 账户信息(§9.4),已实现 | — |
+| ~~`GET/PUT /api/p2p-policy`~~ ✅ | P2P 入站规则(§9.2):存 `p2p.json`,daemon 展开成 P2P 条目 | — |
 | 静态资源缓存头 | hash 资源 `Cache-Control: immutable`,index.html `no-cache` | P1 |
 | `/api/healthz` 复用 | 用作"已连接"指示(server 已有) | P1 |
 | 错误码化 | 后端返回稳定 `code` 而非可读句子,便于 i18n | P2 |
@@ -471,10 +472,9 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
 
 ## 12. 分阶段落地
 
-> **已完成**:P0(shadcn 4.x radix-nova/neutral/Geist、深浅色主题、i18n)、
-> P1(顶部 navbar 外壳、基础组件、文案全量抽取)、P2(agent-ui 即时发布 + 发布对话框 +
-> 键盘/暂停/骨架屏;server-ui 骨架屏 + Overview 精简)、P3 分项:agent-ui 账户/登录状态。
-> 验证:两个 app `pnpm build`;无头 Chromium 覆盖根/子路由 × zh/en × 浅/深色;CDP 脚本真实点击。
+> **已完成**:P0(shadcn 4.x、主题、i18n)、P1(navbar 外壳、基础组件、文案抽取)、
+> P2(agent-ui 即时发布 + 发布对话框;server-ui 骨架屏)、P3 分项(账户/登录状态、端口与服务改版)。
+> 验证:两个 app `pnpm build`;无头 Chromium 根/子路由 × zh/en × 浅/深色;CDP 真实点击。
 
 | 阶段 | 内容 | 产出 |
 |---|---|---|

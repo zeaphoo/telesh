@@ -33,6 +33,7 @@ export default function App() {
     fetchAll,
     fetchPublish,
     fetchAccount,
+    fetchP2pPolicy,
     refreshAll,
   } = useAgent()
   const [tab, setTab] = useState('publish')
@@ -42,13 +43,15 @@ export default function App() {
     fetchAll()
     fetchPublish()
     fetchAccount()
+    fetchP2pPolicy()
     const timer = setInterval(() => {
       fetchAll()
       fetchPublish()
       fetchAccount()
+      fetchP2pPolicy()
     }, 2000)
     return () => clearInterval(timer)
-  }, [fetchAll, fetchPublish, fetchAccount])
+  }, [fetchAll, fetchPublish, fetchAccount, fetchP2pPolicy])
 
   const tunnel = tunnels[0]
   const totals = useMemo(() => {

@@ -79,11 +79,35 @@ pub struct EntryStatus {
     pub detail: Option<String>,
 }
 
+/// P2P 入站规则:哪些本地端口允许被远端 peer 通过 P2P 直连。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum P2pMode {
+    /// 所有在监听的本地端口(服务名 = 端口号)。
+    All,
+    /// 只有 `ports` 里列出的端口(服务名 = 端口号)。
+    #[default]
+    Selected,
+    /// 不允许任何 P2P 入站。
+    None,
+}
+
+/// P2P 入站规则。`ports` 只在 `mode == selected` 时有意义。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct P2pPolicy {
+    #[serde(default)]
+    pub mode: P2pMode,
+    #[serde(default)]
+    pub ports: Vec<u16>,
+}
+
 /// 本地 UI 与 daemon 之间的共享状态。
 pub struct Shared {
     desired: Mutex<Vec<Entry>>,
     status: Mutex<Vec<EntryStatus>>,
     ports: Mutex<Vec<PortInfo>>,
+    /// P2P 入站规则(由 UI 设置)。
+    p2p: Mutex<P2pPolicy>,
     /// 配置有变化时唤醒 daemon。
     pub notify: Notify,
     /// 目标名 → 本地地址。数据面和 iroh 两条传输都用它选路:
@@ -97,6 +121,7 @@ impl Shared {
             desired: Mutex::new(Vec::new()),
             status: Mutex::new(Vec::new()),
             ports: Mutex::new(Vec::new()),
+            p2p: Mutex::new(P2pPolicy::default()),
             notify: Notify::new(),
             targets: Arc::new(DashMap::new()),
         }
@@ -158,6 +183,16 @@ impl Shared {
             SocketAddr::from(([127, 0, 0, 1], port))
         }
     }
+
+    pub fn p2p_policy(&self) -> P2pPolicy {
+        self.p2p.lock().unwrap().clone()
+    }
+
+    /// UI 改了 P2P 入站规则:存下来并唤醒 daemon。
+    pub fn set_p2p_policy(&self, policy: P2pPolicy) {
+        *self.p2p.lock().unwrap() = policy;
+        self.notify.notify_one();
+    }
 }
 
 static SHARED: OnceLock<Arc<Shared>> = OnceLock::new();
@@ -197,4 +232,47 @@ pub fn save(state_path: &Path, entries: &[Entry]) -> Result<()> {
 /// 发布配置与 state file 同目录。
 fn publish_path(state_path: &Path) -> std::path::PathBuf {
     state_path.with_file_name("publish.json")
+}
+
+/// 从 `p2p.json` 读 P2P 入站规则。
+///
+/// 文件不存在时兼容旧配置:把 `publish.json` 里的显式 P2P 条目当作「选定端口」,
+/// 并落盘成规则文件(之后 P2P 只由这条规则决定)。
+pub fn load_policy(state_path: &Path) -> Result<P2pPolicy> {
+    let path = p2p_path(state_path);
+    if path.exists() {
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("cannot read {}", path.display()))?;
+        return serde_json::from_str(&text)
+            .with_context(|| format!("cannot parse {}", path.display()));
+    }
+
+    let ports: Vec<u16> = load(state_path)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|e| match e {
+            Entry::P2p { local_port, .. } => Some(local_port),
+            _ => None,
+        })
+        .collect();
+    let policy = P2pPolicy {
+        mode: P2pMode::Selected,
+        ports,
+    };
+    if !policy.ports.is_empty() {
+        let _ = save_policy(state_path, &policy);
+    }
+    Ok(policy)
+}
+
+/// 持久化 P2P 入站规则。
+pub fn save_policy(state_path: &Path, policy: &P2pPolicy) -> Result<()> {
+    let path = p2p_path(state_path);
+    let text = serde_json::to_string_pretty(policy)?;
+    std::fs::write(&path, text).with_context(|| format!("cannot write {}", path.display()))
+}
+
+/// P2P 规则与 state file 同目录。
+fn p2p_path(state_path: &Path) -> std::path::PathBuf {
+    state_path.with_file_name("p2p.json")
 }

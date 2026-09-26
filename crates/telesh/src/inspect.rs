@@ -324,6 +324,7 @@ pub async fn serve_dashboard(addr: SocketAddr) -> anyhow::Result<()> {
         .route("/api/ports", get(api_ports))
         .route("/api/publish", get(api_publish).put(api_set_publish))
         .route("/api/account", get(api_account))
+        .route("/api/p2p-policy", get(api_p2p_policy).put(api_set_p2p_policy))
         .route("/api/requests", get(api_requests))
         .route("/api/requests/{id}", get(api_request_detail))
         .route("/api/requests/{id}/replay", post(api_replay))
@@ -349,6 +350,24 @@ async fn api_publish() -> impl IntoResponse {
 /// 本机 agent 的登录状态与账户信息。
 async fn api_account() -> impl IntoResponse {
     axum::Json(crate::account::snapshot())
+}
+
+/// 当前 P2P 入站规则。
+async fn api_p2p_policy() -> impl IntoResponse {
+    axum::Json(crate::publish::shared().p2p_policy())
+}
+
+/// 覆盖式提交 P2P 入站规则(立即生效)。
+async fn api_set_p2p_policy(
+    axum::Json(policy): axum::Json<crate::publish::P2pPolicy>,
+) -> impl IntoResponse {
+    if let Some(path) = crate::publish::state_path() {
+        if let Err(e) = crate::publish::save_policy(path, &policy) {
+            tracing::warn!("cannot persist the P2P policy: {e:#}");
+        }
+    }
+    crate::publish::shared().set_p2p_policy(policy.clone());
+    axum::Json(policy)
 }
 
 /// 覆盖式提交期望状态(UI 的"保存并应用")。

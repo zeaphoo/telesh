@@ -34,6 +34,7 @@ export const useAgent = create((set, get) => ({
   publishError: null,
   publishLoaded: false,
   publishing: false,
+  p2pPolicy: null,
 
   setFilters: (f) => set({ filters: { ...get().filters, ...f } }),
 
@@ -55,6 +56,34 @@ export const useAgent = create((set, get) => ({
       set({ account: await api('/api/account') })
     } catch {
       set({ account: null })
+    }
+  },
+
+  /** P2P 入站规则(哪些本地端口允许被远端 P2P 直连)。 */
+  fetchP2pPolicy: async () => {
+    try {
+      set({ p2pPolicy: await api('/api/p2p-policy') })
+    } catch {
+      set({ p2pPolicy: null })
+    }
+  },
+
+  /** 覆盖式提交 P2P 规则(即时生效);返回是否成功。 */
+  applyP2pPolicy: async (policy) => {
+    set({ publishing: true, publishError: null })
+    try {
+      const res = await fetch('/api/p2p-policy', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(policy),
+      })
+      if (!res.ok) throw new Error(`PUT /api/p2p-policy: HTTP ${res.status}`)
+      set({ p2pPolicy: await res.json(), publishing: false })
+      await get().fetchP2pPolicy()
+      return true
+    } catch (e) {
+      set({ publishing: false, publishError: errText(e) })
+      return false
     }
   },
 
@@ -88,7 +117,12 @@ export const useAgent = create((set, get) => ({
   },
 
   refreshAll: async () => {
-    await Promise.all([get().fetchAll(), get().fetchPublish(), get().fetchAccount()])
+    await Promise.all([
+      get().fetchAll(),
+      get().fetchPublish(),
+      get().fetchAccount(),
+      get().fetchP2pPolicy(),
+    ])
   },
 
   /** 覆盖式提交期望状态(即时生效);返回是否成功。 */
