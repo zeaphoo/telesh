@@ -143,10 +143,11 @@ export default function RequestLogView() {
 
       {/* 上:请求列表 */}
       <Card>
-        <CardHeader className="flex-row items-center justify-between space-y-0 gap-3">
-          <div>
+        {/* 标题 / 计数 / 筛选器排成一横排(注意 CardHeader 默认是 grid,必须显式加 flex) */}
+        <CardHeader className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 items-baseline gap-2">
             <CardTitle className="text-base">{t('log.listTitle')}</CardTitle>
-            <CardDescription>
+            <CardDescription className="truncate">
               {t('log.count', { shown: filtered.length, total: source.length })}
             </CardDescription>
           </div>

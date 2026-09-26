@@ -422,6 +422,8 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
 ### 9.3 请求追踪
 
 - **上下结构**:上方实时列表,下方选中请求的详情(不再左右分栏);列表 `max-h-[45vh]` 内滚动、表头吸顶。
+- 列表表头一行:标题 / 计数 / 筛选器横排(窄屏自动换行)。注意 shadcn 4.x 的 `CardHeader` 是
+  `grid`,只写 `flex-row` 不会生效,必须显式加 `flex` 覆盖。
 - 列表加 status 圆点、时长/字节对齐;**暂停/继续 live tail** 开关;键盘 `j/k` 选择、`/` 聚焦过滤。
 - 详情:请求 / 响应两栏 + `CopyButton`;未选中时用 `EmptyState`。
 - **已移除重放**(不再需要):UI、store 的 `replay`/`replayOut`/`replaying` 与快捷键 `r` 都已删除
