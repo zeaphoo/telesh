@@ -16,11 +16,17 @@ import { useAgent } from '../store/useAgent'
 
 const TONE = { online: 'success', connecting: 'warning', offline: 'danger' }
 
-function Field({ label, children, mono }) {
+function Field({ label, children, mono, emphasis }) {
   return (
     <div className="grid gap-1 border-b py-2 last:border-b-0 sm:grid-cols-[10rem_1fr] sm:items-center sm:gap-4">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className={cn('min-w-0 break-all', mono ? 'font-mono text-sm' : 'text-base')}>
+      <dd
+        className={cn(
+          'min-w-0 break-all',
+          mono && 'font-mono',
+          emphasis ? 'text-lg font-medium' : 'text-sm'
+        )}
+      >
         {children}
       </dd>
     </div>
@@ -70,7 +76,7 @@ export default function AccountView() {
                   label={t(`account.state.${state}`, { defaultValue: state })}
                 />
               </Field>
-              <Field label={t('account.fields.account')} mono>
+              <Field label={t('account.fields.account')} mono emphasis>
                 {account.account ? (
                   <span className="inline-flex items-center gap-1">
                     {formatAccount(account.account)}
@@ -80,7 +86,7 @@ export default function AccountView() {
                   never
                 )}
               </Field>
-              <Field label={t('account.fields.displayName')}>
+              <Field label={t('account.fields.displayName')} emphasis>
                 {account.display_name || never}
               </Field>
               <Field label={t('account.fields.controlServer')} mono>
