@@ -6,6 +6,7 @@ import {
   Loader2,
   Plus,
   Radio,
+  Settings2,
   Trash2,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -83,8 +84,8 @@ function StatusCell({ entry }) {
   )
 }
 
-/** 可勾选的端口列表(对话框与 P2P 规则共用同一视觉)。 */
-function PortRow({ port, process, httpHint, selected, onSelect, hint }) {
+/** 可勾选的端口行(发布对话框与 P2P 规则对话框共用)。 */
+function PortRow({ port, process, hint, selected, onSelect }) {
   return (
     <button
       type="button"
@@ -95,14 +96,14 @@ function PortRow({ port, process, httpHint, selected, onSelect, hint }) {
         selected ? 'bg-accent text-accent-foreground' : 'hover:bg-muted'
       )}
     >
-      <span className="w-6 shrink-0">
+      <span className="flex w-5 shrink-0 justify-center">
         {selected && <Check className="size-4" />}
       </span>
       <span className="w-16 shrink-0 font-mono text-xs tabular-nums">{port}</span>
       <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
         {process || '—'}
       </span>
-      {httpHint && hint}
+      {hint}
     </button>
   )
 }
@@ -122,14 +123,22 @@ export default function PublishView() {
     applyP2pPolicy,
   } = useAgent()
 
-  const [dialogOpen, setDialogOpen] = useState(false)
+  // 发布对话框
+  const [publishOpen, setPublishOpen] = useState(false)
   const [selPort, setSelPort] = useState(null)
   const [mode, setMode] = useState('http')
   const [subDomain, setSubDomain] = useState('')
   const [remotePort, setRemotePort] = useState('')
 
+  // 连接远程端口对话框
+  const [mirrorOpen, setMirrorOpen] = useState(false)
   const [mirrorForm, setMirrorForm] = useState({ remote: '', local_port: '' })
   const [mirrorWarn, setMirrorWarn] = useState(null)
+
+  // P2P 规则对话框(草稿,点“保存规则”才提交)
+  const [ruleOpen, setRuleOpen] = useState(false)
+  const [ruleMode, setRuleMode] = useState('selected')
+  const [rulePorts, setRulePorts] = useState([])
 
   const publicEntries = useMemo(
     () => publish.filter((e) => e && (e.kind === 'http' || e.kind === 'tcp')),
@@ -151,25 +160,21 @@ export default function PublishView() {
     return [...byPort.values()].sort((a, b) => a.port - b.port)
   }, [ports])
 
-  // 尚未对外发布的端口(发布对话框里可选)。
-  const usedPorts = useMemo(
-    () => new Set(publish.map((e) => Number(e.local_port))),
-    [publish]
-  )
+  const usedPorts = useMemo(() => new Set(publish.map((e) => Number(e.local_port))), [publish])
   const available = useMemo(
     () => listening.filter((p) => !usedPorts.has(p.port)),
     [listening, usedPorts]
   )
-  const selectedInListening = useMemo(
-    () => new Set(listening.map((p) => p.port)),
-    [listening]
-  )
+  const listeningSet = useMemo(() => new Set(listening.map((p) => p.port)), [listening])
 
   const hasAnything =
     publicEntries.length > 0 ||
     mirrors.length > 0 ||
     policyMode !== 'selected' ||
     policyPorts.length > 0
+
+  const httpHint = (p) =>
+    p.http_hint ? <StatusBadge state="live" label={t('publish.detectedHttp')} /> : null
 
   async function apply(next, okMsg) {
     const ok = await applyPublish(next)
@@ -178,20 +183,13 @@ export default function PublishView() {
     return ok
   }
 
-  async function applyPolicy(patch, okMsg) {
-    const next = { mode: policyMode, ports: policyPorts, ...patch }
-    const ok = await applyP2pPolicy(next)
-    if (ok) toast.success(okMsg)
-    else toast.error(useAgent.getState().publishError || tc('error.api'))
-    return ok
-  }
-
-  function openDialog() {
+  // ---- 发布 ----
+  function openPublish() {
     setSelPort(null)
     setMode('http')
     setSubDomain('')
     setRemotePort('')
-    setDialogOpen(true)
+    setPublishOpen(true)
   }
 
   async function submitPublish() {
@@ -203,7 +201,7 @@ export default function PublishView() {
       if (Number.isFinite(n)) entry.remote_port = n
     }
     const next = [...toDesired(publish).filter((e) => e.local_port !== selPort), entry]
-    if (await apply(next, t('publish.added'))) setDialogOpen(false)
+    if (await apply(next, t('publish.added'))) setPublishOpen(false)
   }
 
   async function unpublish(entry) {
@@ -213,7 +211,14 @@ export default function PublishView() {
     await apply(next, t('publish.removed'))
   }
 
-  async function addMirror() {
+  // ---- 连接远程端口 ----
+  function openMirror() {
+    setMirrorForm({ remote: '', local_port: '' })
+    setMirrorWarn(null)
+    setMirrorOpen(true)
+  }
+
+  async function submitMirror() {
     const remote = mirrorForm.remote.trim()
     const rawPort = mirrorForm.local_port.trim()
     const port = Number(rawPort)
@@ -230,10 +235,7 @@ export default function PublishView() {
       return
     }
     const next = [...toDesired(publish), { kind: 'mirror', local_port: port, remote }]
-    if (await apply(next, t('publish.mirrors.added'))) {
-      setMirrorForm({ remote: '', local_port: '' })
-      setMirrorWarn(null)
-    }
+    if (await apply(next, t('publish.mirrors.added'))) setMirrorOpen(false)
   }
 
   async function removeMirror(entry) {
@@ -243,6 +245,37 @@ export default function PublishView() {
     await apply(next, t('publish.mirrors.removed'))
   }
 
+  // ---- P2P 规则 ----
+  function openRule() {
+    setRuleMode(policyMode)
+    setRulePorts(policyPorts)
+    setRuleOpen(true)
+  }
+
+  function toggleRulePort(port) {
+    setRulePorts((list) =>
+      list.includes(port) ? list.filter((p) => p !== port) : [...list, port].sort((a, b) => a - b)
+    )
+  }
+
+  async function submitRule() {
+    const ok = await applyP2pPolicy({ mode: ruleMode, ports: rulePorts })
+    const { publishError: err } = useAgent.getState()
+    if (ok) {
+      toast.success(t('publish.p2p.saved'))
+      setRuleOpen(false)
+    } else {
+      toast.error(err || tc('error.api'))
+    }
+  }
+
+  const ruleSummary =
+    policyMode === 'all'
+      ? t('publish.p2p.summaryAll', { n: listening.length })
+      : policyMode === 'none'
+        ? t('publish.p2p.summaryNone')
+        : t('publish.p2p.summarySelected', { n: policyPorts.length })
+
   function targetOf(e) {
     if (e.kind === 'http') return e.sub_domain || t('publish.targetAuto')
     if (e.kind === 'tcp') {
@@ -251,27 +284,18 @@ export default function PublishView() {
     return '—'
   }
 
-  function togglePolicyPort(port) {
-    const set = new Set(policyPorts)
-    if (set.has(port)) set.delete(port)
-    else set.add(port)
-    applyPolicy({ ports: [...set].sort((a, b) => a - b) }, t('publish.p2p.saved'))
-  }
-
-  const canSubmit = selPort != null && !publishing
-
   return (
     <div className="mx-auto max-w-5xl space-y-4 px-4 py-6 sm:px-6">
       <PageHeader
         title={t('nav.publish')}
         actions={
-          <Button onClick={openDialog} className="gap-1">
+          <Button onClick={openPublish} className="gap-1">
             <Plus className="size-4" /> {t('publish.add')}
           </Button>
         }
       />
 
-      {/* 一眼可见的概览:没配置任何东西时整行不显示 */}
+      {/* 概览:没配置任何东西时整行不显示 */}
       {hasAnything && (
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline">
@@ -304,7 +328,7 @@ export default function PublishView() {
               title={t('publish.none')}
               description={t('publish.noneHint')}
               action={
-                <Button variant="outline" size="sm" onClick={openDialog} className="gap-1">
+                <Button variant="outline" size="sm" onClick={openPublish} className="gap-1">
                   <Plus className="size-3.5" /> {t('publish.add')}
                 </Button>
               }
@@ -348,7 +372,7 @@ export default function PublishView() {
         </CardContent>
       </Card>
 
-      {/* 区块二:远程连接与 P2P */}
+      {/* 区块二:远程连接与 P2P(两个操作各走一个对话框) */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
@@ -359,38 +383,15 @@ export default function PublishView() {
         <CardContent className="space-y-5">
           {/* 2a. 连接远程端口 */}
           <section className="space-y-3">
-            <div>
-              <h3 className="text-sm font-medium">{t('publish.mirrors.title')}</h3>
-              <p className="text-xs text-muted-foreground">{t('publish.mirrors.desc')}</p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                className={`${INPUT_CLS} w-56`}
-                value={mirrorForm.remote}
-                onChange={(e) => setMirrorForm((f) => ({ ...f, remote: e.target.value }))}
-                placeholder={t('publish.mirrors.remotePlaceholder')}
-              />
-              <input
-                className={`${INPUT_CLS} w-36`}
-                type="number"
-                min="1"
-                max="65535"
-                value={mirrorForm.local_port}
-                onChange={(e) => setMirrorForm((f) => ({ ...f, local_port: e.target.value }))}
-                placeholder={t('publish.mirrors.localPortPlaceholder')}
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={addMirror}
-                disabled={publishing}
-                className="gap-1"
-              >
-                <Plus className="size-3.5" /> {t('publish.mirrors.add')}
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-medium">{t('publish.mirrors.title')}</h3>
+                <p className="text-xs text-muted-foreground">{t('publish.mirrors.desc')}</p>
+              </div>
+              <Button variant="outline" size="sm" onClick={openMirror} className="shrink-0 gap-1">
+                <Plus className="size-3.5" /> {t('publish.mirrors.confirm')}
               </Button>
             </div>
-            {mirrorWarn && <p className="text-xs text-destructive">{mirrorWarn}</p>}
-
             {mirrors.length === 0 ? (
               <p className="text-xs text-muted-foreground">{t('publish.mirrors.empty')}</p>
             ) : (
@@ -434,73 +435,25 @@ export default function PublishView() {
           </section>
 
           {/* 2b. P2P 入站规则 */}
-          <section className="space-y-3 border-t pt-5">
-            <div>
-              <h3 className="flex items-center gap-2 text-sm font-medium">
-                <Radio className="size-3.5" /> {t('publish.p2p.title')}
-              </h3>
-              <p className="text-xs text-muted-foreground">{t('publish.p2p.desc')}</p>
-            </div>
-            <Tabs
-              value={policyMode}
-              onValueChange={(v) => applyPolicy({ mode: v }, t('publish.p2p.saved'))}
-            >
-              <TabsList>
-                <TabsTrigger value="all">{t('publish.p2p.all')}</TabsTrigger>
-                <TabsTrigger value="selected">{t('publish.p2p.selected')}</TabsTrigger>
-                <TabsTrigger value="none">{t('publish.p2p.none')}</TabsTrigger>
-              </TabsList>
-            </Tabs>
-
-            {policyMode === 'all' && (
-              <p className="text-xs text-muted-foreground">
-                {t('publish.p2p.allHint', { n: listening.length })}
-              </p>
-            )}
-            {policyMode === 'none' && (
-              <p className="text-xs text-muted-foreground">{t('publish.p2p.noneHint')}</p>
-            )}
-            {policyMode === 'selected' && (
-              <div className="space-y-2">
-                <p className="text-xs text-muted-foreground">
-                  {t('publish.p2p.selectedHint', { n: policyPorts.length })}
-                </p>
-                {listening.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">{t('publish.p2p.noPorts')}</p>
-                ) : (
-                  <div className="max-h-64 overflow-auto rounded-md border">
-                    {listening.map((p) => (
-                      <PortRow
-                        key={p.port}
-                        port={p.port}
-                        process={p.process}
-                        selected={policyPorts.includes(p.port)}
-                        onSelect={() => togglePolicyPort(p.port)}
-                        hint={
-                          p.http_hint ? (
-                            <StatusBadge state="live" label={t('publish.detectedHttp')} />
-                          ) : null
-                        }
-                      />
-                    ))}
-                  </div>
-                )}
-                {policyPorts.some((p) => !selectedInListening.has(p)) && (
-                  <p className="text-xs text-muted-foreground">
-                    {t('publish.p2p.offlinePorts', {
-                      ports: policyPorts.filter((p) => !selectedInListening.has(p)).join(', '),
-                    })}
-                  </p>
-                )}
+          <section className="border-t pt-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="flex items-center gap-2 text-sm font-medium">
+                  <Radio className="size-3.5" /> {t('publish.p2p.title')}
+                </h3>
+                <p className="text-xs text-muted-foreground">{ruleSummary}</p>
               </div>
-            )}
+              <Button variant="outline" size="sm" onClick={openRule} className="shrink-0 gap-1">
+                <Settings2 className="size-3.5" /> {t('publish.p2p.configure')}
+              </Button>
+            </div>
           </section>
         </CardContent>
       </Card>
 
-      {/* 发布对话框(HTTP / TCP) */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl">
+      {/* 发布端口对话框 */}
+      <Dialog open={publishOpen} onOpenChange={setPublishOpen}>
+        <DialogContent className="sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>{t('publish.dialog.title')}</DialogTitle>
             <DialogDescription>{t('publish.dialog.description')}</DialogDescription>
@@ -516,19 +469,15 @@ export default function PublishView() {
               ) : available.length === 0 ? (
                 <EmptyState icon={Globe} description={t('publish.dialog.noPorts')} />
               ) : (
-                <div className="max-h-56 overflow-auto rounded-md border">
+                <div className="max-h-64 overflow-auto rounded-md border">
                   {available.map((p) => (
                     <PortRow
                       key={p.port}
                       port={p.port}
                       process={p.process}
+                      hint={httpHint(p)}
                       selected={selPort === p.port}
                       onSelect={() => setSelPort(p.port)}
-                      hint={
-                        p.http_hint ? (
-                          <StatusBadge state="live" label={t('publish.detectedHttp')} />
-                        ) : null
-                      }
                     />
                   ))}
                 </div>
@@ -579,12 +528,146 @@ export default function PublishView() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setPublishOpen(false)}>
               {tc('action.cancel')}
             </Button>
-            <Button onClick={submitPublish} disabled={!canSubmit} className="gap-1">
+            <Button
+              onClick={submitPublish}
+              disabled={selPort == null || publishing}
+              className="gap-1"
+            >
               {publishing && <Loader2 className="size-4 animate-spin" />}
               {t('publish.dialog.confirm')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 连接远程端口对话框 */}
+      <Dialog open={mirrorOpen} onOpenChange={setMirrorOpen}>
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{t('publish.mirrors.dialogTitle')}</DialogTitle>
+            <DialogDescription>{t('publish.mirrors.desc')}</DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="mirror-remote">{t('publish.mirrors.columns.remote')}</Label>
+              <input
+                id="mirror-remote"
+                className={INPUT_CLS}
+                value={mirrorForm.remote}
+                onChange={(e) => setMirrorForm((f) => ({ ...f, remote: e.target.value }))}
+                placeholder={t('publish.mirrors.remotePlaceholder')}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="mirror-port">{t('publish.mirrors.columns.localPort')}</Label>
+              <input
+                id="mirror-port"
+                className={INPUT_CLS}
+                type="number"
+                min="1"
+                max="65535"
+                value={mirrorForm.local_port}
+                onChange={(e) => setMirrorForm((f) => ({ ...f, local_port: e.target.value }))}
+                placeholder={t('publish.mirrors.localPortPlaceholder')}
+              />
+            </div>
+          </div>
+          {mirrorWarn && <p className="text-xs text-destructive">{mirrorWarn}</p>}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMirrorOpen(false)}>
+              {tc('action.cancel')}
+            </Button>
+            <Button onClick={submitMirror} disabled={publishing} className="gap-1">
+              {publishing && <Loader2 className="size-4 animate-spin" />}
+              {t('publish.mirrors.confirm')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* P2P 入站规则对话框 */}
+      <Dialog open={ruleOpen} onOpenChange={setRuleOpen}>
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{t('publish.p2p.dialogTitle')}</DialogTitle>
+            <DialogDescription>{t('publish.p2p.desc')}</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <Tabs value={ruleMode} onValueChange={setRuleMode}>
+              <TabsList>
+                <TabsTrigger value="all">{t('publish.p2p.all')}</TabsTrigger>
+                <TabsTrigger value="selected">{t('publish.p2p.selected')}</TabsTrigger>
+                <TabsTrigger value="none">{t('publish.p2p.none')}</TabsTrigger>
+              </TabsList>
+            </Tabs>
+
+            {ruleMode === 'all' && (
+              <p className="text-xs text-muted-foreground">
+                {t('publish.p2p.allHint', { n: listening.length })}
+              </p>
+            )}
+            {ruleMode === 'none' && (
+              <p className="text-xs text-muted-foreground">{t('publish.p2p.noneHint')}</p>
+            )}
+            {ruleMode === 'selected' && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs text-muted-foreground">
+                    {t('publish.p2p.selectedHint', { n: rulePorts.length })}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setRulePorts(listening.map((p) => p.port))}
+                    >
+                      {t('publish.p2p.selectAll')}
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => setRulePorts([])}>
+                      {t('publish.p2p.clear')}
+                    </Button>
+                  </div>
+                </div>
+                {listening.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">{t('publish.p2p.noPorts')}</p>
+                ) : (
+                  <div className="max-h-64 overflow-auto rounded-md border">
+                    {listening.map((p) => (
+                      <PortRow
+                        key={p.port}
+                        port={p.port}
+                        process={p.process}
+                        hint={httpHint(p)}
+                        selected={rulePorts.includes(p.port)}
+                        onSelect={() => toggleRulePort(p.port)}
+                      />
+                    ))}
+                  </div>
+                )}
+                {rulePorts.some((p) => !listeningSet.has(p)) && (
+                  <p className="text-xs text-muted-foreground">
+                    {t('publish.p2p.offlinePorts', {
+                      ports: rulePorts.filter((p) => !listeningSet.has(p)).join(', '),
+                    })}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRuleOpen(false)}>
+              {tc('action.cancel')}
+            </Button>
+            <Button onClick={submitRule} disabled={publishing} className="gap-1">
+              {publishing && <Loader2 className="size-4 animate-spin" />}
+              {t('publish.p2p.save')}
             </Button>
           </DialogFooter>
         </DialogContent>

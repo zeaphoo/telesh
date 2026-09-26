@@ -88,6 +88,8 @@
       "warnRemote": "Enter the remote service ACCOUNT/NAME",
       "warnPort": "Enter a valid local port (1-65535)",
       "warnDuplicate": "Local port {{port}} already exists",
+      "dialogTitle": "Connect a remote port",
+      "confirm": "Connect",
       "added": "Added",
       "removed": "Removed"
     },
@@ -102,6 +104,14 @@
       "noneHint": "All P2P inbound connections are refused.",
       "noPorts": "No listening local ports.",
       "offlinePorts": "Selected but not listening: {{ports}}",
+      "configure": "Configure",
+      "dialogTitle": "P2P inbound rule",
+      "save": "Save rule",
+      "selectAll": "Select all",
+      "clear": "Clear",
+      "summaryAll": "All ports ({{n}} listening)",
+      "summarySelected": "Selected ports ({{n}})",
+      "summaryNone": "No P2P inbound at all",
       "saved": "P2P rule updated"
     }
   },

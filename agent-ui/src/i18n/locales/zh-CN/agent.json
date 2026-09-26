@@ -88,6 +88,8 @@
       "warnRemote": "请填写远端服务 ACCOUNT/NAME",
       "warnPort": "请填写有效的本地端口 (1-65535)",
       "warnDuplicate": "本地端口 {{port}} 已存在",
+      "dialogTitle": "连接远程端口",
+      "confirm": "连接",
       "added": "已添加",
       "removed": "已移除"
     },
@@ -102,6 +104,14 @@
       "noneHint": "所有 P2P 入站都会被拒绝。",
       "noPorts": "没有在监听的本地端口。",
       "offlinePorts": "未监听但仍在规则里:{{ports}}",
+      "configure": "设置",
+      "dialogTitle": "P2P 入站规则",
+      "save": "保存规则",
+      "selectAll": "全选",
+      "clear": "清空",
+      "summaryAll": "全部端口({{n}} 个在监听)",
+      "summarySelected": "选择端口(已选 {{n}} 个)",
+      "summaryNone": "不允许任何 P2P 入站",
       "saved": "P2P 规则已更新"
     }
   },
