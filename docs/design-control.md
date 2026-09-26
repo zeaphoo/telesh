@@ -155,6 +155,8 @@ peer 发的是同一个 `hello`,只是 `client_kind:"lookup"`:
 | `p2p_announce_resp` | server → agent | `ok{name}` / `name_taken{name}` / `invalid_name{name}` | 每个名字的归属结果 |
 | `p2p_lookup` | peer → server | `account`, `name` | 解析目录项 |
 | `p2p_addr` | server → peer | `found{account,name,owner_name,addr,token?}` / `not_found` | 目录结果;也是订阅推送 |
+| `p2p_list` | agent → server | `id`, `account` | 列出该账户当前提供的服务名(本地 UI 的「连接远程端口」用) |
+| `p2p_list_resp` | server → agent | `id`, `names[]` | 服务名列表(已排序去重,可为空) |
 | `traffic` | agent → server | `name`, `up`, `down` | 服务端看不到的 P2P 流量计数 |
 | `tcp_mapped` | agent → server | `name`, `addr`, `local_port` | 路由器端口映射得到公网端点 |
 | `token_check` | agent → server | `id`, `account`, `name`, `token` | 请服务端校验不透明访问令牌 |

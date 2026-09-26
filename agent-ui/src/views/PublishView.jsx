@@ -6,6 +6,7 @@ import {
   Loader2,
   Plus,
   Radio,
+  Search,
   Settings2,
   Trash2,
 } from 'lucide-react'
@@ -127,6 +128,7 @@ export default function PublishView() {
     applyPublish,
     p2pPolicy,
     applyP2pPolicy,
+    listServices,
   } = useAgent()
 
   // 发布对话框
@@ -136,9 +138,13 @@ export default function PublishView() {
   const [subDomain, setSubDomain] = useState('')
   const [remotePort, setRemotePort] = useState('')
 
-  // 连接远程端口对话框
+  // 连接远程端口对话框:先输 ACCOUNT 查询,再选服务 + 本地端口
   const [mirrorOpen, setMirrorOpen] = useState(false)
-  const [mirrorForm, setMirrorForm] = useState({ remote: '', local_port: '' })
+  const [account, setAccount] = useState('')
+  const [services, setServices] = useState(null)
+  const [querying, setQuerying] = useState(false)
+  const [selService, setSelService] = useState(null)
+  const [localPort, setLocalPort] = useState('')
   const [mirrorWarn, setMirrorWarn] = useState(null)
 
   // 远程连接规则对话框(草稿,点“保存”才提交)
@@ -213,20 +219,49 @@ export default function PublishView() {
 
   // ---- 连接远程端口 ----
   function openMirror() {
-    setMirrorForm({ remote: '', local_port: '' })
+    setAccount('')
+    setServices(null)
+    setQuerying(false)
+    setSelService(null)
+    setLocalPort('')
     setMirrorWarn(null)
     setMirrorOpen(true)
   }
 
-  async function submitMirror() {
-    const remote = mirrorForm.remote.trim()
-    const rawPort = mirrorForm.local_port.trim()
-    const port = Number(rawPort)
-    if (!remote) {
-      setMirrorWarn(t('publish.mirrors.warnRemote'))
+  async function queryServices() {
+    const acct = account.trim()
+    if (!acct) {
+      setMirrorWarn(t('publish.mirrors.warnAccount'))
       return
     }
-    if (!rawPort || !Number.isFinite(port) || port <= 0 || port > 65535) {
+    setQuerying(true)
+    setMirrorWarn(null)
+    try {
+      setServices(await listServices(acct))
+      setSelService(null)
+    } catch (e) {
+      setServices([])
+      setMirrorWarn(t('publish.mirrors.queryError', { error: e?.message || e }))
+    } finally {
+      setQuerying(false)
+    }
+  }
+
+  function pickService(name) {
+    setSelService(name)
+    setMirrorWarn(null)
+    // 服务名通常就是端口号:本地端口空着时顺手填上
+    if (!localPort.trim() && /^\d+$/.test(name)) setLocalPort(name)
+  }
+
+  async function submitMirror() {
+    const acct = account.trim()
+    if (!acct || !selService) {
+      setMirrorWarn(t('publish.mirrors.warnService'))
+      return
+    }
+    const port = Number(localPort.trim())
+    if (!localPort.trim() || !Number.isFinite(port) || port <= 0 || port > 65535) {
       setMirrorWarn(t('publish.mirrors.warnPort'))
       return
     }
@@ -234,6 +269,7 @@ export default function PublishView() {
       setMirrorWarn(t('publish.mirrors.warnDuplicate', { port }))
       return
     }
+    const remote = `${acct}/${selService}`
     const next = [...toDesired(publish), { kind: 'mirror', local_port: port, remote }]
     if (await apply(next, t('publish.mirrors.added'))) setMirrorOpen(false)
   }
@@ -550,7 +586,7 @@ export default function PublishView() {
         </DialogContent>
       </Dialog>
 
-      {/* 连接远程端口对话框 */}
+      {/* 连接远程端口对话框:ACCOUNT → 查询 → 选服务 → 本地端口 → 连接 */}
       <Dialog open={mirrorOpen} onOpenChange={setMirrorOpen}>
         <DialogContent className="sm:max-w-3xl">
           <DialogHeader>
@@ -558,27 +594,76 @@ export default function PublishView() {
             <DialogDescription>{t('publish.mirrors.desc')}</DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="mirror-remote">{t('publish.mirrors.columns.remote')}</Label>
-              <input
-                id="mirror-remote"
-                className={INPUT_CLS}
-                value={mirrorForm.remote}
-                onChange={(e) => setMirrorForm((f) => ({ ...f, remote: e.target.value }))}
-                placeholder={t('publish.mirrors.remotePlaceholder')}
-              />
+              <Label htmlFor="mirror-account">{t('publish.mirrors.accountLabel')}</Label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="mirror-account"
+                  className={cn(INPUT_CLS, 'max-w-xs')}
+                  value={account}
+                  onChange={(e) => setAccount(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && queryServices()}
+                  placeholder={t('publish.mirrors.accountPlaceholder')}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={queryServices}
+                  disabled={querying || !account.trim()}
+                  className="gap-1"
+                >
+                  {querying ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Search className="size-3.5" />
+                  )}
+                  {querying ? t('publish.mirrors.querying') : t('publish.mirrors.query')}
+                </Button>
+              </div>
             </div>
+
+            <div className="space-y-2">
+              <p className="text-sm font-medium">{t('publish.mirrors.services')}</p>
+              {services == null ? (
+                <p className="text-xs text-muted-foreground">{t('publish.mirrors.queryHint')}</p>
+              ) : services.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  {t('publish.mirrors.noServices')}
+                </p>
+              ) : (
+                <div className="max-h-56 overflow-auto rounded-md border">
+                  {services.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => pickService(s)}
+                      aria-pressed={selService === s}
+                      className={cn(
+                        'flex w-full items-center gap-3 border-b px-3 py-2 text-left transition-colors last:border-b-0',
+                        selService === s ? 'bg-accent text-accent-foreground' : 'hover:bg-muted'
+                      )}
+                    >
+                      <span className="flex w-5 shrink-0 justify-center">
+                        {selService === s && <Check className="size-4" />}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate font-mono text-xs">{s}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="space-y-1.5">
-              <Label htmlFor="mirror-port">{t('publish.mirrors.columns.localPort')}</Label>
+              <Label htmlFor="mirror-port">{t('publish.mirrors.localPortLabel')}</Label>
               <input
                 id="mirror-port"
-                className={INPUT_CLS}
+                className={cn(INPUT_CLS, 'max-w-xs')}
                 type="number"
                 min="1"
                 max="65535"
-                value={mirrorForm.local_port}
-                onChange={(e) => setMirrorForm((f) => ({ ...f, local_port: e.target.value }))}
+                value={localPort}
+                onChange={(e) => setLocalPort(e.target.value)}
                 placeholder={t('publish.mirrors.localPortPlaceholder')}
               />
             </div>
@@ -589,7 +674,11 @@ export default function PublishView() {
             <Button variant="outline" onClick={() => setMirrorOpen(false)}>
               {tc('action.cancel')}
             </Button>
-            <Button onClick={submitMirror} disabled={publishing} className="gap-1">
+            <Button
+              onClick={submitMirror}
+              disabled={!selService || !localPort.trim() || publishing}
+              className="gap-1"
+            >
               {publishing && <Loader2 className="size-4 animate-spin" />}
               {t('publish.mirrors.confirm')}
             </Button>

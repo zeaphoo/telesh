@@ -44,6 +44,7 @@
 | `p2p_announce_resp` | 按名称的归属结果；当*另一个* `EndpointId` 拥有该名称时为 `name_taken` |
 | `p2p_lookup` | peer 解析 `account/name` |
 | `p2p_addr` | 查询结果外加一个短期访问令牌；当某个名称被重新通告时，订阅者也会收到该推送 |
+| `p2p_list` / `p2p_list_resp` | 列出某个账户当前提供的服务名（本地 UI 的「连接远程端口」先查后选） |
 | `lookup` | 仅查询连接的第一帧；不注册任何内容 |
 | `traffic` | 服务端无法观测到的 P2P 流量计数 |
 | `tcp_mapped` | 通过路由器端口映射获得的公网端点 |

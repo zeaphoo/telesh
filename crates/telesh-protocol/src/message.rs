@@ -327,6 +327,23 @@ pub enum P2PAddrResp {
     NotFound,
 }
 
+/// Agent → server:列出一个账户当前提供的服务名(本地 UI 的「连接远程端口」用)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct P2PList {
+    /// 关联 id,把回复和请求对上。
+    pub id: u64,
+    /// 9 位账户句柄。
+    pub account: String,
+}
+
+/// Server → agent:[`P2PList`] 的结果。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct P2PListResp {
+    pub id: u64,
+    /// 该账户下的服务名(已排序去重)。
+    pub names: Vec<String>,
+}
+
 /// 首条客户端消息:协商身份与认证方式。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientHello {
@@ -433,6 +450,8 @@ pub enum Frame {
     P2PAnnounceResp(P2PAnnounceResp),
     P2PLookup(P2PLookup),
     P2PAddr(P2PAddrResp),
+    P2PList(P2PList),
+    P2PListResp(P2PListResp),
     Traffic(TrafficReport),
     TcpMapped(TcpMapped),
     AuthChallenge(AuthChallenge),

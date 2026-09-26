@@ -130,6 +130,18 @@ pub fn p2p_claim(name: String, entry: P2pEntry) -> P2pClaim {
     }
 }
 
+/// 某个账户当前通告的服务名(排序、去重)。本地 UI 的「连接远程端口」用它列出可选服务。
+pub fn p2p_names(account: &str) -> Vec<String> {
+    let prefix = format!("{account}/");
+    let mut names: Vec<String> = p2p_dir()
+        .iter()
+        .filter_map(|e| e.key().strip_prefix(&prefix).map(str::to_string))
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
 fn p2p_subs() -> &'static DashMap<String, Vec<UnboundedSender<Frame>>> {
     P2P_SUBS.get().expect("server state not initialized")
 }

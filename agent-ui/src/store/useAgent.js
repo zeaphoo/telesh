@@ -66,6 +66,14 @@ export const useAgent = create((set, get) => ({
     }
   },
 
+  /** 查某个账户当前提供的服务名(供「连接远程端口」选)。 */
+  listServices: async (account) => {
+    const res = await fetch(`/api/p2p/services?account=${encodeURIComponent(account.trim())}`)
+    if (!res.ok) throw new Error(`GET /api/p2p/services: HTTP ${res.status}`)
+    const data = await res.json()
+    return Array.isArray(data.services) ? data.services : []
+  },
+
   /** 覆盖式提交 P2P 规则(即时生效);返回是否成功。 */
   applyP2pPolicy: async (policy) => {
     set({ publishing: true, publishError: null })

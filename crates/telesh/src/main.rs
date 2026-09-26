@@ -15,6 +15,7 @@ mod auth;
 mod config;
 mod daemon;
 mod data;
+mod directory;
 mod inspect;
 mod local;
 mod p2p;

@@ -325,6 +325,7 @@ pub async fn serve_dashboard(addr: SocketAddr) -> anyhow::Result<()> {
         .route("/api/publish", get(api_publish).put(api_set_publish))
         .route("/api/account", get(api_account))
         .route("/api/p2p-policy", get(api_p2p_policy).put(api_set_p2p_policy))
+        .route("/api/p2p/services", get(api_p2p_services))
         .route("/api/requests", get(api_requests))
         .route("/api/requests/{id}", get(api_request_detail))
         .route("/api/requests/{id}/replay", post(api_replay))
@@ -355,6 +356,25 @@ async fn api_account() -> impl IntoResponse {
 /// 当前 P2P 入站规则。
 async fn api_p2p_policy() -> impl IntoResponse {
     axum::Json(crate::publish::shared().p2p_policy())
+}
+
+/// 某个账户当前提供的服务名(「连接远程端口」的选择列表)。
+async fn api_p2p_services(
+    axum::extract::Query(q): axum::extract::Query<ServicesQuery>,
+) -> impl IntoResponse {
+    let account = q.account.trim();
+    let services = if account.is_empty() {
+        Vec::new()
+    } else {
+        crate::directory::list(account).await
+    };
+    axum::Json(serde_json::json!({ "account": account, "services": services }))
+}
+
+#[derive(serde::Deserialize)]
+struct ServicesQuery {
+    #[serde(default)]
+    account: String,
 }
 
 /// 覆盖式提交 P2P 入站规则(立即生效)。

@@ -137,6 +137,7 @@ async fn session(creds: &Credentials, shared: &Arc<Shared>) -> Result<()> {
         }
     });
     crate::token_check::set_control(tx.clone());
+    crate::directory::set_control(tx.clone());
 
     // ---- 数据面(agent 主动连入) ----
     let data_task = match hello.data_addr() {
@@ -262,6 +263,7 @@ fn handle_frame(frame: Frame, applied: &mut [Applied], tx: &mpsc::UnboundedSende
         Frame::TokenCheckResp(r) => {
             crate::token_check::resolve(r.id, if r.ok { Some(r.expires_at) } else { None })
         }
+        Frame::P2PListResp(r) => crate::directory::resolve(r.id, r.names),
         Frame::TunnelResp(resp) => apply_tunnel_resp(resp, applied),
         Frame::P2PAnnounceResp(resp) => apply_p2p_resp(resp, applied),
         _ => debug!("ignoring unexpected frame from server"),

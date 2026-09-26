@@ -415,10 +415,11 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
 - **区块一 · 对外发布**:发到公网(HTTP 子域 / 公网 TCP)。header 右侧是 `已发布 N` + `发布端口` 按钮;
   未配置时只显示一句空态,**不渲染空表格**;有内容时列 端口 / 目标 / 状态 / 操作。
 - **区块二 · 远程连接**:两个操作各走一个对话框(点“连接”/“设置”),区块内只留列表与摘要。
-  - *连接远程端口*:对话框填 `ACCOUNT/NAME` + 本地端口,确认即生效。
-  - *允许远程连接的本地端口*:对话框选 `全部端口 / 仅选定端口 / 不允许`(可勾选、全选、清空),
-    保存即生效;区块内**直接列出端口号**(不是只给数字);规则存 `<dataroot>/p2p.json`,
-    由 daemon 展开成 P2P 条目(见 §11)。界面文案不使用“P2P”这个词。
+  - *连接远程端口*:先输 `ACCOUNT` → 「查询」列出该账户的服务(服务名通常是端口号)→ 选服务
+    (服务名是数字时自动填上本地端口)→ 填本地端口 → 确认即生效。
+  - *允许远程连接的本地端口*:对话框选 `全部端口 / 仅选定端口 / 不允许`(可勾选、全选、清空),保存即生效;
+    区块内**直接列出端口号**(不是只给数字);规则存 `<dataroot>/p2p.json`,由 daemon 展开成 P2P 条目(见 §11)。
+    界面文案不使用“P2P”这个词。
 
 ### 9.3 请求追踪
 
@@ -448,10 +449,8 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
 ## 10. 无障碍、动效与元信息
 
 - 所有可交互元素 `:focus-visible` 用 `--ring`;Tabs 用 Radix roving focus,`sheet`/`dialog` 自带焦点陷阱与 `aria-modal`。
-- 表格 `<th scope="col">`;数字列 `tabular-nums`。
-- 状态除颜色外加圆点/图标/文案;同步与保存结果用 `aria-live="polite"`。
-- `prefers-reduced-motion: reduce` 下把 `tw-animate-css` 的动画降为 0。
-- `index.html`:加 favicon、`theme-color`(深浅各一)、i18n 同步 `lang`、`t()` 设 `<title>`。
+- 表格 `<th scope="col">`、数字列 `tabular-nums`;状态除颜色外加圆点/图标/文案,同步结果用 `aria-live="polite"`。
+- `prefers-reduced-motion: reduce` 下把 `tw-animate-css` 的动画降为 0;`index.html` 加 favicon/`theme-color`、i18n 同步 `lang`、`t()` 设 `<title>`。
 
 ---
 
@@ -461,6 +460,7 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
 |---|---|---|
 | ~~`GET /api/account`~~ ✅ | agent 的登录状态 + 账户信息(§9.4),已实现 | — |
 | ~~`GET/PUT /api/p2p-policy`~~ ✅ | P2P 入站规则(§9.2):存 `p2p.json`,daemon 展开成 P2P 条目 | — |
+| ~~`GET /api/p2p/services?account=`~~ ✅ | 按 ACCOUNT 列服务(`p2p_list` / `p2p_list_resp`,见 `design-control.md`) | — |
 | 静态资源缓存头 | hash 资源 `Cache-Control: immutable`,index.html `no-cache` | P1 |
 | `/api/healthz` 复用 | 用作"已连接"指示(server 已有) | P1 |
 | 错误码化 | 后端返回稳定 `code` 而非可读句子,便于 i18n | P2 |

@@ -16,7 +16,8 @@ use tracing::{debug, error, info, warn};
 
 use telesh_protocol::{
     self as proto, decode, encode, login_message, AuthChallenge, AuthError, AuthMethod, AuthOk,
-    ClientHello, ClientKind, Frame, P2PAddrResp, P2PAnnounceResp, PublicKey, ServerHello,
+    ClientHello, ClientKind, Frame, P2PAddrResp, P2PAnnounceResp, P2PListResp, PublicKey,
+    ServerHello,
     Signature, TokenCheckResp, TunnelKind, TunnelPublish, TunnelResp, TunnelResult,
 };
 
@@ -562,6 +563,16 @@ async fn dispatch(
             let _ = tx.send(Frame::P2PAddr(resp));
         }
         Frame::P2PAddr(_) => debug!("unexpected P2PAddr from agent"),
+        // Agent asks which services an account currently offers (for its local UI).
+        Frame::P2PList(list) => {
+            let names = crate::state::p2p_names(&list.account);
+            debug!(account = %list.account, count = names.len(), "p2p list");
+            let _ = tx.send(Frame::P2PListResp(P2PListResp {
+                id: list.id,
+                names,
+            }));
+        }
+        Frame::P2PListResp(_) => debug!("unexpected P2PListResp from agent"),
         // Agent asks whether an opaque token is a live grant for account/name.
         Frame::TokenCheck(tc) => {
             let (ok, expires_at) = match tc.account.parse::<u32>() {
