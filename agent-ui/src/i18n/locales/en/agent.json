@@ -2,7 +2,7 @@
   "title": "telesh",
   "nav": {
     "publish": "Ports & services",
-    "log": "Request log",
+    "log": "Request tracing",
     "account": "Account"
   },
   "header": {
@@ -118,7 +118,7 @@
   "log": {
     "count": "{{shown}} / {{total}} shown · latest 100",
     "listTitle": "Requests",
-    "shortcuts": "j/k select · r replay · / filter",
+    "shortcuts": "j/k select · / filter",
     "paused": "Paused",
     "live": "Live",
     "opaque": "(binary/opaque)",
@@ -132,9 +132,6 @@
     "payloadRequest": "Request",
     "payloadResponse": "Response",
     "emptyPayload": "(empty)",
-    "replayTitle": "Replay",
-    "replayDescription": "Re-send the captured request straight to the local service (dev aid)",
-    "replaying": "Replaying…",
     "columns": {
       "time": "Time",
       "method": "Method",

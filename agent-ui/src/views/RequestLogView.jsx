@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, Inbox } from 'lucide-react'
+import { Inbox } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '../components/copy-button'
 import { EmptyState } from '../components/empty-state'
 import { PageHeader } from '../components/page-header'
 import { StatusBadge } from '../components/status-badge'
-import { Button } from '../components/ui/button'
 import {
   Card,
   CardContent,
@@ -35,7 +34,7 @@ function Payload({ title, text, emptyLabel, copyLabel }) {
         <p className="text-xs font-medium text-muted-foreground">{title}</p>
         {text && <CopyButton value={text} aria-label={copyLabel} />}
       </div>
-      <pre className="max-h-72 overflow-auto rounded-md bg-muted p-3 text-xs whitespace-pre-wrap break-all">
+      <pre className="max-h-80 overflow-auto rounded-md bg-muted p-3 text-xs whitespace-pre-wrap break-all">
         {text || emptyLabel}
       </pre>
     </div>
@@ -54,7 +53,7 @@ function statusTone(code) {
 function LogSkeleton() {
   return (
     <TableBody>
-      {Array.from({ length: 6 }).map((_, i) => (
+      {Array.from({ length: 5 }).map((_, i) => (
         <TableRow key={i}>
           <TableCell><Skeleton className="h-4 w-16" /></TableCell>
           <TableCell><Skeleton className="h-4 w-12" /></TableCell>
@@ -67,27 +66,17 @@ function LogSkeleton() {
   )
 }
 
-/** 请求日志视图:实时列表 + 详情/重放。 */
+/** 请求追踪:上方实时列表,下方选中请求的详情。 */
 export default function RequestLogView() {
   const { t } = useTranslation()
   const { t: tc } = useTranslation('common')
-  const {
-    requests,
-    loading,
-    selected,
-    replayOut,
-    replaying,
-    filters,
-    setFilters,
-    select,
-    replay,
-  } = useAgent()
+  const { requests, loading, selected, filters, setFilters, select } = useAgent()
 
   const [paused, setPaused] = useState(false)
   const [snapshot, setSnapshot] = useState([])
   const filterInputRef = useRef(null)
 
-  // Pausing freezes the list for inspection; resuming returns to the live feed.
+  // 暂停冻结列表便于查看;恢复回到实时流。
   const togglePause = () => {
     if (!paused) setSnapshot(requests)
     setPaused(!paused)
@@ -110,7 +99,7 @@ export default function RequestLogView() {
     })
   }, [source, filters])
 
-  // Keyboard: j/k move selection, r replays, / focuses the filter.
+  // 键盘:j/k 上下选择,`/` 聚焦过滤。
   const filteredRef = useRef(filtered)
   filteredRef.current = filtered
   const selectedIdRef = useRef(selected?.id)
@@ -137,8 +126,6 @@ export default function RequestLogView() {
             ? Math.min(list.length - 1, idx < 0 ? 0 : idx + 1)
             : Math.max(0, idx < 0 ? list.length - 1 : idx - 1)
         select(list[nextIdx].id)
-      } else if (e.key === 'r') {
-        if (selectedIdRef.current) replay(selectedIdRef.current.id)
       } else if (e.key === '/') {
         e.preventDefault()
         filterInputRef.current?.focus()
@@ -146,7 +133,7 @@ export default function RequestLogView() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [select, replay])
+  }, [select])
 
   const showSkeleton = loading && source.length === 0
 
@@ -154,163 +141,137 @@ export default function RequestLogView() {
     <div className="mx-auto max-w-5xl space-y-4 px-4 py-6 sm:px-6">
       <PageHeader title={t('nav.log')} description={t('log.shortcuts')} />
 
-      <div className="grid gap-4 lg:grid-cols-[2fr_3fr]">
-        {/* Request log */}
-        <Card>
-          <CardHeader className="flex-row items-center justify-between space-y-0 gap-3">
-            <div>
-              <CardTitle className="text-base">{t('log.listTitle')}</CardTitle>
-              <CardDescription>
-                {t('log.count', { shown: filtered.length, total: source.length })}
-              </CardDescription>
-            </div>
-            <div className="flex items-center gap-2">
-              <select
-                value={filters.method}
-                onChange={(e) => setFilters({ method: e.target.value })}
-                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-              >
-                <option value="">{t('log.anyMethod')}</option>
-                {methods.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-              <input
-                ref={filterInputRef}
-                value={filters.q}
-                onChange={(e) => setFilters({ q: e.target.value })}
-                placeholder={t('log.filterPlaceholder')}
-                className="h-8 w-40 rounded-md border border-input bg-background px-2 text-xs"
-              />
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3 p-0">
-            <div className="flex items-center gap-2 px-6">
-              <Switch id="live-tail" checked={!paused} onCheckedChange={togglePause} />
-              <Label htmlFor="live-tail" className="text-xs text-muted-foreground">
-                {paused ? t('log.paused') : t('log.live')}
-              </Label>
-            </div>
-            <div className="max-h-[70vh] overflow-auto">
-              <Table>
-                <TableHeader className="sticky top-0 bg-card">
-                  <TableRow>
-                    <TableHead>{t('log.columns.time')}</TableHead>
-                    <TableHead>{t('log.columns.method')}</TableHead>
-                    <TableHead>{t('log.columns.path')}</TableHead>
-                    <TableHead>{t('log.columns.status')}</TableHead>
-                    <TableHead>{t('log.columns.ms')}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                {showSkeleton ? (
-                  <LogSkeleton />
-                ) : (
-                  <TableBody>
-                    {filtered.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={5} className="p-0">
-                          <EmptyState
-                            icon={Inbox}
-                            description={
-                              source.length === 0 ? t('log.empty') : t('log.emptyFiltered')
-                            }
+      {/* 上:请求列表 */}
+      <Card>
+        <CardHeader className="flex-row items-center justify-between space-y-0 gap-3">
+          <div>
+            <CardTitle className="text-base">{t('log.listTitle')}</CardTitle>
+            <CardDescription>
+              {t('log.count', { shown: filtered.length, total: source.length })}
+            </CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={filters.method}
+              onChange={(e) => setFilters({ method: e.target.value })}
+              className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+            >
+              <option value="">{t('log.anyMethod')}</option>
+              {methods.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+            <input
+              ref={filterInputRef}
+              value={filters.q}
+              onChange={(e) => setFilters({ q: e.target.value })}
+              placeholder={t('log.filterPlaceholder')}
+              className="h-8 w-40 rounded-md border border-input bg-background px-2 text-xs"
+            />
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3 p-0">
+          <div className="flex items-center gap-2 px-6">
+            <Switch id="live-tail" checked={!paused} onCheckedChange={togglePause} />
+            <Label htmlFor="live-tail" className="text-xs text-muted-foreground">
+              {paused ? t('log.paused') : t('log.live')}
+            </Label>
+          </div>
+          <div className="max-h-[45vh] overflow-auto">
+            <Table>
+              <TableHeader className="sticky top-0 bg-card">
+                <TableRow>
+                  <TableHead>{t('log.columns.time')}</TableHead>
+                  <TableHead>{t('log.columns.method')}</TableHead>
+                  <TableHead>{t('log.columns.path')}</TableHead>
+                  <TableHead>{t('log.columns.status')}</TableHead>
+                  <TableHead>{t('log.columns.ms')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              {showSkeleton ? (
+                <LogSkeleton />
+              ) : (
+                <TableBody>
+                  {filtered.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="p-0">
+                        <EmptyState
+                          icon={Inbox}
+                          description={
+                            source.length === 0 ? t('log.empty') : t('log.emptyFiltered')
+                          }
+                        />
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    filtered.map((r) => (
+                      <TableRow
+                        key={r.id}
+                        className="cursor-pointer"
+                        data-state={selected?.id === r.id ? 'selected' : undefined}
+                        onClick={() => select(r.id)}
+                      >
+                        <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
+                          {r.started_at}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">
+                          <StatusBadge
+                            tone={r.method === 'GET' ? 'muted' : 'info'}
+                            label={r.method || '?'}
                           />
                         </TableCell>
+                        <TableCell className="max-w-96 truncate font-mono text-xs">
+                          {r.path || t('log.opaque')}
+                        </TableCell>
+                        <TableCell>
+                          <StatusBadge tone={statusTone(r.status)} label={r.status ?? '—'} />
+                        </TableCell>
+                        <TableCell className="font-mono text-xs tabular-nums">
+                          {r.duration_ms}
+                        </TableCell>
                       </TableRow>
-                    ) : (
-                      filtered.map((r) => (
-                        <TableRow
-                          key={r.id}
-                          className="cursor-pointer"
-                          data-state={selected?.id === r.id ? 'selected' : undefined}
-                          onClick={() => select(r.id)}
-                        >
-                          <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
-                            {r.started_at}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs">
-                            <StatusBadge
-                              tone={r.method === 'GET' ? 'muted' : 'info'}
-                              label={r.method || '?'}
-                            />
-                          </TableCell>
-                          <TableCell className="max-w-40 truncate font-mono text-xs">
-                            {r.path || t('log.opaque')}
-                          </TableCell>
-                          <TableCell>
-                            <StatusBadge tone={statusTone(r.status)} label={r.status ?? '—'} />
-                          </TableCell>
-                          <TableCell className="font-mono text-xs tabular-nums">
-                            {r.duration_ms}
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                )}
-              </Table>
+                    ))
+                  )}
+                </TableBody>
+              )}
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 下:请求详情 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">{t('log.detail')}</CardTitle>
+          <CardDescription>
+            {selected
+              ? `${selected.method || '?'} ${selected.path || t('log.opaque')} · ${selected.duration_ms}ms · ${formatBytes(selected.req_bytes)} in / ${formatBytes(selected.resp_bytes)} out`
+              : t('log.detailHint')}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {selected ? (
+            <div className="flex flex-col gap-4 lg:flex-row">
+              <Payload
+                title={t('log.payloadRequest')}
+                text={selected.payload}
+                emptyLabel={t('log.emptyPayload')}
+                copyLabel={tc('action.copy')}
+              />
+              <Payload
+                title={t('log.payloadResponse')}
+                text={selected.resp_payload}
+                emptyLabel={t('log.emptyPayload')}
+                copyLabel={tc('action.copy')}
+              />
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Detail + replay */}
-        <div className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">{t('log.detail')}</CardTitle>
-              <CardDescription>
-                {selected
-                  ? `${selected.method || '?'} ${selected.path || t('log.opaque')} · ${selected.duration_ms}ms · ${formatBytes(selected.req_bytes)} in / ${formatBytes(selected.resp_bytes)} out`
-                  : t('log.detailHint')}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {selected ? (
-                <div className="flex flex-col gap-3 sm:flex-row">
-                  <Payload
-                    title={t('log.payloadRequest')}
-                    text={selected.payload}
-                    emptyLabel={t('log.emptyPayload')}
-                    copyLabel={tc('action.copy')}
-                  />
-                  <Payload
-                    title={t('log.payloadResponse')}
-                    text={selected.resp_payload}
-                    emptyLabel={t('log.emptyPayload')}
-                    copyLabel={tc('action.copy')}
-                  />
-                </div>
-              ) : (
-                <EmptyState icon={Inbox} description={t('log.selectHint')} />
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">{t('log.replayTitle')}</CardTitle>
-              <CardDescription>{t('log.replayDescription')}</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Button
-                disabled={!selected || replaying}
-                onClick={() => selected && replay(selected.id)}
-                className="gap-1"
-              >
-                <Activity className="size-4" />
-                {replaying ? t('log.replaying') : tc('action.replay')}
-              </Button>
-              {replayOut && (
-                <pre className="max-h-48 overflow-auto rounded-md bg-muted p-3 text-xs whitespace-pre-wrap break-all">
-                  {replayOut}
-                </pre>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+          ) : (
+            <EmptyState icon={Inbox} description={t('log.selectHint')} />
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

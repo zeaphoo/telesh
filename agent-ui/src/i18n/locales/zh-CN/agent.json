@@ -2,7 +2,7 @@
   "title": "telesh",
   "nav": {
     "publish": "端口与服务",
-    "log": "请求日志",
+    "log": "请求追踪",
     "account": "账户"
   },
   "header": {
@@ -118,7 +118,7 @@
   "log": {
     "count": "{{shown}} / {{total}} 条 · 最近 100 条",
     "listTitle": "请求列表",
-    "shortcuts": "j/k 选择 · r 重放 · / 过滤",
+    "shortcuts": "j/k 选择 · / 过滤",
     "paused": "已暂停",
     "live": "实时",
     "opaque": "(二进制/不透明)",
@@ -132,9 +132,6 @@
     "payloadRequest": "请求",
     "payloadResponse": "响应",
     "emptyPayload": "(空)",
-    "replayTitle": "重放",
-    "replayDescription": "把捕获到的请求直接重发给本地服务(开发辅助)",
-    "replaying": "重放中…",
     "columns": {
       "time": "时间",
       "method": "方法",

@@ -12,8 +12,8 @@ function errText(e) {
 
 /**
  * Agent-local inspector state: tunnels (this agent), the rolling request
- * log, the currently inspected request, replay output, and the desired
- * port-publishing state (`/api/ports` + `/api/publish`).
+ * log, the currently inspected request, and the desired port-publishing state
+ * (`/api/ports` + `/api/publish`).
  */
 export const useAgent = create((set, get) => ({
   loading: true,
@@ -23,8 +23,6 @@ export const useAgent = create((set, get) => ({
   requests: [],
   account: null,
   selected: null,
-  replayOut: null,
-  replaying: false,
   filters: { method: '', q: '' },
 
   // --- Ports & publishing -------------------------------------------------
@@ -149,25 +147,9 @@ export const useAgent = create((set, get) => ({
   select: async (id) => {
     try {
       const detail = await api(`/api/requests/${id}`)
-      set({ selected: detail, replayOut: null })
+      set({ selected: detail })
     } catch (e) {
       set({ error: errText(e) })
-    }
-  },
-
-  replay: async (id) => {
-    const { selected } = get()
-    set({ replaying: true })
-    try {
-      const res = await fetch(`/api/requests/${id}/replay`, { method: 'POST' })
-      const text = await res.text()
-      set({ replayOut: `${new Date().toLocaleTimeString()} — HTTP ${res.status}${text ? `\n${text}` : ''}`, replaying: false })
-      // refresh the log (the replay may have produced a new real request too)
-      const requests = await api('/api/requests')
-      const fresh = requests.find((r) => r.id === selected?.id) || null
-      set({ requests, selected: fresh })
-    } catch (e) {
-      set({ replayOut: `replay failed: ${e?.message || e}`, replaying: false })
     }
   },
 }))

@@ -309,10 +309,8 @@ server.overview.agentsOnline  server.tunnels.empty
 | `common.status.error` | 错误 | Error |
 | `common.status.targetGone` | 目标已消失 | Target gone |
 | `common.status.notListening` | 未监听 | Not listening |
-| `agent.nav.publish` | 端口与发布 | Ports & publishing |
-| `agent.nav.log` | 请求日志 | Request log |
-| `common.action.saveApply` | 保存并应用 | Save & apply |
-| `common.action.replay` | 重放请求 | Replay request |
+| `agent.nav.publish` | 端口与服务 | Ports & services |
+| `agent.nav.log` | 请求追踪 | Request tracing |
 
 ### 6.6 防遗漏
 
@@ -406,8 +404,8 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
 
 ### 9.1 外壳
 
-与 server-ui 同款外壳(导航在顶部 navbar,无侧边栏),导航两项(端口与发布 / 请求日志),
-品牌区为 `SquareTerminal` 图标 + “telesh”;连接状态与隧道信息放在 navbar 右侧。
+与 server-ui 同款外壳(导航在顶部 navbar,无侧边栏),导航三项(端口与服务 / 请求追踪 / 账户),
+品牌区为 `SquareTerminal` 图标 + “telesh”;账户、连接状态与隧道信息放在 navbar 右侧。
 
 ### 9.2 端口与服务(即时生效,无保存按钮)
 
@@ -421,14 +419,13 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
     保存即生效;决定哪些本地端口可被远端 P2P 直连(服务名 = 端口号),存 `<dataroot>/p2p.json`。
 - 顶部仅在有配置时显示一行概览(已发布 N / 镜像 N / P2P 模式),否则整行隐藏。
 
-### 9.3 请求日志
+### 9.3 请求追踪
 
-- 左日志右详情;日志表加 status 圆点、时长色条、字节数右对齐。
-- **暂停/继续 live tail** 开关(`switch`)+ `Kbd` 提示。
-- 键盘 `j/k` 选择、`r` replay、`/` 聚焦过滤。
-- 详情用 `tabs`(Headers / Body),JSON 格式化 + 折叠 + `CopyButton`;
-  空内容用 `EmptyState`,不显示 `(empty)`。
-- Replay:按钮 loading + 结果 toast,内联结果面板保留。
+- **上下结构**:上方实时列表,下方选中请求的详情(不再左右分栏);列表 `max-h-[45vh]` 内滚动、表头吸顶。
+- 列表加 status 圆点、时长/字节对齐;**暂停/继续 live tail** 开关;键盘 `j/k` 选择、`/` 聚焦过滤。
+- 详情:请求 / 响应两栏 + `CopyButton`;未选中时用 `EmptyState`。
+- **已移除重放**(不再需要):UI、store 的 `replay`/`replayOut`/`replaying` 与快捷键 `r` 都已删除
+  (后端 `/api/requests/{id}/replay` 保留,仅不再从 UI 调用)。
 
 ### 9.4 账户与登录状态
 
