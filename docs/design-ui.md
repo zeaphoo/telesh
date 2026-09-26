@@ -360,19 +360,19 @@ agent-ui/  (server-ui 同构)
 
 ### 8.1 外壳
 
+导航在顶部 navbar 上,**没有侧边栏**。
+
 ```
-┌───────────────────────────────────────────────────────────┐
-│ [logo] telesh      ● 已连接 · 2s 前   ⟳   ☾   [中文/EN]   │  header 56px
-├────────────┬──────────────────────────────────────────────┤
-│ Overview   │                                              │
-│ Clients    │   content (居中, 24px padding)                │
-│ Tunnels    │                                              │
-│ «          │                                              │
-└────────────┴──────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│ [icon] telesh   Overview  Clients  Tunnels   ● 已连接  ⟳  ☾  [中/EN] │  56px
+├────────────────────────────────────────────────────────────────────┤
+│  content(居中，24px padding)                                       │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-侧边栏:lucide 图标 + 文案,active 用 `--sidebar-accent`(shadcn 默认已有该 token);
-移动端用 shadcn `sheet`。导航文案 `t('server.nav.*')`。
+导航项:lucide 图标 + 文案,active 用 `bg-accent text-accent-foreground`;
+窄屏(<sm)只显示图标,`aria-label` 保留完整名称。导航文案 `t('<app>.nav.*')`。
+移动端不再用 `sheet`(仅 2–3 项,横排够用)。
 
 ### 8.2 Overview
 
@@ -406,7 +406,8 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
 
 ### 9.1 外壳
 
-与 server-ui 同款外壳,导航两项(端口与发布 / 请求日志),品牌区显示本机地址与连接状态。
+与 server-ui 同款外壳(导航在顶部 navbar,无侧边栏),导航两项(端口与发布 / 请求日志),
+品牌区为 `SquareTerminal` 图标 + “telesh”;连接状态与隧道信息放在 navbar 右侧。
 
 ### 9.2 端口与发布
 
@@ -465,7 +466,7 @@ agent-ui 现在的中英混排彻底消除。
 > P0 + P1 + P2 已完成(2025-09)。
 > - **P0**:两个 app 均接入 shadcn 4.x(radix-nova / neutral / Geist)、next-themes
 >   浅深色切换 + 防闪白、i18n 骨架(zh-CN/en,浏览器优先)。
-> - **P1**:统一外壳(header + 可折叠侧边栏 + 移动端 `sheet`)、自定义组件
+> - **P1**:统一外壳(顶部 navbar 导航,无侧边栏)、自定义组件
 >   `StatusBadge`/`StatusDot`/`StatCard`/`EmptyState`/`CopyButton`/`LiveIndicator`/`PageHeader`,
 >   页面文案全量抽取。
 > - **P2**:agent-ui 粘性保存条 + 脏状态检测(与服务端 desired 逐字段比对)+ `beforeunload`
@@ -478,7 +479,7 @@ agent-ui 现在的中英混排彻底消除。
 | 阶段 | 内容 | 产出 |
 |---|---|---|
 | ~~P0 接入~~ ✅ | 两个 app 各自接 shadcn CLI(§3)、主题(§4)、i18n 骨架(§6) | 深色/浅色可切、shadcn 默认外观、i18n 通道打通 |
-| ~~P1 骨架与组件~~ ✅ | 外壳/侧边栏、`StatusBadge`/`StatCard`/`EmptyState`/`CopyButton`/`LiveIndicator`/`PageHeader`、全部文案抽取 | 结构统一、无硬编码文案 |
+| ~~P1 骨架与组件~~ ✅ | 外壳/navbar 导航、`StatusBadge`/`StatCard`/`EmptyState`/`CopyButton`/`LiveIndicator`/`PageHeader`、全部文案抽取 | 结构统一、无硬编码文案 |
 | ~~P2 页面重构~~ ✅ | §8 三页 + §9 两页 + 骨架屏 + 错误/空/成功四态 | 业务页焕新 |
 | **P3 体验** | live tail 时间轴/高亮、ECharts 流量曲线、移动端细节 | 手感 |
 | **P4 收尾** | reduced-motion、favicon/`theme-color`、缓存头、a11y 全量、代码分割(server-ui 单 chunk 已 >500KB) | 可交付 |

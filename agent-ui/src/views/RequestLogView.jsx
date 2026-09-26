@@ -67,7 +67,7 @@ function LogSkeleton() {
   )
 }
 
-/** The original inspector view: rolling request log + detail/replay. */
+/** 请求日志视图:实时列表 + 详情/重放。 */
 export default function RequestLogView() {
   const { t } = useTranslation()
   const { t: tc } = useTranslation('common')

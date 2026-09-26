@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Activity, ArrowDownUp, Bug, Network, RefreshCw, Server } from 'lucide-react'
+import { Activity, ArrowDownUp, Network, RefreshCw, Server, SquareTerminal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { AppShell } from './components/app-shell'
@@ -49,24 +49,24 @@ export default function App() {
   }, [requests])
 
   const brand = (
-    <span className="flex min-w-0 items-center gap-2 text-sm font-semibold tracking-tight">
-      <Bug className="size-4 shrink-0" />
-      <span className="truncate">{t('title')}</span>
-      {tunnel && (
-        <span className="hidden min-w-0 items-center gap-1.5 text-xs font-normal text-muted-foreground md:flex">
-          <Badge variant={tunnel.mode === 'tcp' ? 'secondary' : 'default'}>
-            {tunnel.mode}
-          </Badge>
-          <span className="truncate font-mono">{tunnel.remote}</span>
-          <span>→</span>
-          <span className="truncate font-mono">{tunnel.local}</span>
-        </span>
-      )}
+    <span className="flex shrink-0 items-center gap-2 text-sm font-semibold tracking-tight">
+      <SquareTerminal className="size-4" />
+      {t('title')}
     </span>
   )
 
   const status = (
     <span className="hidden items-center gap-3 xl:flex">
+      {tunnel && (
+        <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <Badge variant={tunnel.mode === 'tcp' ? 'secondary' : 'default'}>
+            {tunnel.mode}
+          </Badge>
+          <span className="max-w-40 truncate font-mono">{tunnel.remote}</span>
+          <span>→</span>
+          <span className="max-w-40 truncate font-mono">{tunnel.local}</span>
+        </span>
+      )}
       <span className="flex items-center gap-1 text-xs text-muted-foreground">
         <Server className="size-3.5" /> {t('header.requests', { n: requests.length })}
       </span>
