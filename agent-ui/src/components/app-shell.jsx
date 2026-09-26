@@ -40,7 +40,7 @@ export function AppShell({ brand, status, actions, nav, active, onNavigate, chil
         <div className="flex h-14 items-center gap-3 px-4">
           {brand}
           <NavList nav={nav} active={active} onSelect={onNavigate} />
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             {status}
             {actions}
           </div>

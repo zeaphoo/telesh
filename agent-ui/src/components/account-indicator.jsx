@@ -5,22 +5,31 @@ import { cn } from '@/lib/utils'
 
 const TONE = { online: 'success', connecting: 'warning', offline: 'danger' }
 
-/** navbar 上的账户/登录状态小指示器。在线时显示账户句柄,否则显示状态文案。 */
+/**
+ * navbar 上的账户/登录状态。**全应用只保留这一个状态圆点**;在线时显示账户句柄,
+ * 否则显示状态文案。整体定宽、文案不逐秒刷新,避免导航栏左右抖动。
+ */
 export function AccountIndicator({ account, className }) {
   const { t } = useTranslation()
   const state = account?.state || 'offline'
   const tone = TONE[state] || 'muted'
-  const label =
-    state === 'online'
-      ? account?.account || t('account.state.online')
-      : t(`account.state.${state}`, { defaultValue: state })
+  const online = state === 'online'
 
   return (
-    <span
-      className={cn('inline-flex items-center gap-1.5 text-xs text-muted-foreground', className)}
-    >
+    <span className={cn('inline-flex min-w-28 shrink-0 items-center gap-2', className)}>
       <StatusDot tone={tone} pulse={state !== 'offline'} />
-      <span className="font-mono">{label}</span>
+      {online ? (
+        <span
+          className="min-w-0 truncate font-mono text-sm font-medium"
+          title={account?.account || ''}
+        >
+          {account?.account}
+        </span>
+      ) : (
+        <span className="text-sm text-muted-foreground">
+          {t(`account.state.${state}`, { defaultValue: state })}
+        </span>
+      )}
     </span>
   )
 }

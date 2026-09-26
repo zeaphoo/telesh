@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next'
 
 import { AccountIndicator } from './components/account-indicator'
 import { AppShell } from './components/app-shell'
-import { LiveIndicator } from './components/live-indicator'
 import { LocaleSwitcher } from './components/locale-switcher'
 import { ThemeToggle } from './components/theme-toggle'
 import { Badge } from './components/ui/badge'
@@ -31,7 +30,6 @@ export default function App() {
     requests,
     account,
     error,
-    lastSync,
     fetchAll,
     fetchPublish,
     fetchAccount,
@@ -70,27 +68,31 @@ export default function App() {
     </span>
   )
 
+  // 导航栏右侧:所有会变化的数值都给定宽 + tabular-nums,整体 shrink-0,
+  // 避免轮询刷新时布局左右抽动。
   const status = (
-    <span className="hidden items-center gap-3 xl:flex">
+    <span className="hidden shrink-0 items-center gap-3 xl:flex">
       <AccountIndicator account={account} />
       {tunnel && (
-        <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
           <Badge variant={tunnel.mode === 'tcp' ? 'secondary' : 'default'}>
             {tunnel.mode}
           </Badge>
-          <span className="max-w-40 truncate font-mono">{tunnel.remote}</span>
-          <span>→</span>
-          <span className="max-w-40 truncate font-mono">{tunnel.local}</span>
+          <span className="w-32 truncate text-right font-mono">{tunnel.remote}</span>
+          <span aria-hidden="true">→</span>
+          <span className="w-24 truncate font-mono">{tunnel.local}</span>
         </span>
       )}
-      <span className="flex items-center gap-1 text-xs text-muted-foreground">
-        <Server className="size-3.5" /> {t('header.requests', { n: requests.length })}
+      <span className="flex w-28 shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums">
+        <Server className="size-3.5 shrink-0" />
+        <span className="truncate">{t('header.requests', { n: requests.length })}</span>
       </span>
-      <span className="flex items-center gap-1 text-xs text-muted-foreground">
-        <ArrowDownUp className="size-3.5" /> ↑ {formatBytes(totals.req)} ↓{' '}
-        {formatBytes(totals.resp)}
+      <span className="flex w-40 shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums">
+        <ArrowDownUp className="size-3.5 shrink-0" />
+        <span className="truncate">
+          ↑ {formatBytes(totals.req)} ↓ {formatBytes(totals.resp)}
+        </span>
       </span>
-      <LiveIndicator online={!error} lastSync={lastSync} />
     </span>
   )
 

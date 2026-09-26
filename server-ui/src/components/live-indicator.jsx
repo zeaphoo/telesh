@@ -26,7 +26,10 @@ export function LiveIndicator({ online = true, lastSync, className }) {
 
   return (
     <span
-      className={cn('inline-flex items-center gap-1.5 text-xs text-muted-foreground', className)}
+      className={cn(
+        'inline-flex min-w-36 items-center gap-1.5 text-xs tabular-nums text-muted-foreground',
+        className
+      )}
     >
       <StatusDot tone={online ? 'success' : 'danger'} pulse={online} />
       {label}

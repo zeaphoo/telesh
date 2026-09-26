@@ -20,7 +20,7 @@ function Field({ label, children, mono }) {
   return (
     <div className="grid gap-1 border-b py-2 last:border-b-0 sm:grid-cols-[10rem_1fr] sm:items-center sm:gap-4">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className={cn('min-w-0 break-all', mono ? 'font-mono text-xs' : 'text-sm')}>
+      <dd className={cn('min-w-0 break-all', mono ? 'font-mono text-sm' : 'text-base')}>
         {children}
       </dd>
     </div>

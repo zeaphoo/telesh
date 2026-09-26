@@ -43,7 +43,7 @@ export function AppShell({ brand, status, actions, nav, children }) {
         <div className="flex h-14 items-center gap-3 px-4">
           {brand}
           <NavList nav={nav} />
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             {status}
             {actions}
           </div>
