@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '../components/copy-button'
 import { EmptyState } from '../components/empty-state'
-import { PageHeader } from '../components/page-header'
 import { StatusBadge } from '../components/status-badge'
 import {
   Card,
@@ -139,8 +138,6 @@ export default function RequestLogView() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-4 px-4 py-6 sm:px-6">
-      <PageHeader title={t('nav.log')} description={t('log.shortcuts')} />
-
       {/* 上:请求列表 */}
       <Card>
         {/* 标题 / 计数 / 筛选器排成一横排(注意 CardHeader 默认是 grid,必须显式加 flex) */}
@@ -152,6 +149,9 @@ export default function RequestLogView() {
             </CardDescription>
           </div>
           <div className="flex items-center gap-2">
+            <span className="hidden text-xs text-muted-foreground lg:inline">
+              {t('log.shortcuts')}
+            </span>
             <select
               value={filters.method}
               onChange={(e) => setFilters({ method: e.target.value })}

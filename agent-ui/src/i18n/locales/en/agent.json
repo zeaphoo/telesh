@@ -9,8 +9,6 @@
     "requests": "{{n}} requests"
   },
   "account": {
-    "title": "Account",
-    "description": "This agent's identity and login status.",
     "identity": "Identity",
     "identityDesc": "Keypair login: the public key is the account key.",
     "unavailable": "Cannot read account information.",

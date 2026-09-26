@@ -2,7 +2,6 @@ import { ShieldCheck } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '../components/copy-button'
-import { PageHeader } from '../components/page-header'
 import { StatusBadge } from '../components/status-badge'
 import {
   Card,
@@ -49,8 +48,6 @@ export default function AccountView() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-4 px-4 py-6 sm:px-6">
-      <PageHeader title={t('account.title')} description={t('account.description')} />
-
       {!account ? (
         <Card>
           <CardContent className="text-sm text-muted-foreground">

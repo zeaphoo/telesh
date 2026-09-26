@@ -9,8 +9,6 @@
     "requests": "{{n}} 个请求"
   },
   "account": {
-    "title": "账户",
-    "description": "本机 agent 的身份与登录状态。",
     "identity": "身份",
     "identityDesc": "密钥对登录:公钥即账户密钥。",
     "unavailable": "无法读取账户信息。",

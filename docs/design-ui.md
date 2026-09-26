@@ -155,7 +155,7 @@ token 不够  →  加 CSS 变量(index.css)
 自定义业务组件(**不**从 CLI 生成,放在 `src/components/`):
 
 `StatusDot`、`StatusBadge`、`StatCard`、`EmptyState`、`CopyButton`、`LiveIndicator`、
-`PageHeader`、`LocaleSwitcher`、`ThemeToggle`、`TrafficChart`(P3)。
+`LocaleSwitcher`、`ThemeToggle`、`TrafficChart`(P3)。
 
 ---
 
@@ -409,7 +409,8 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
 
 ### 9.2 端口与服务(即时生效,无保存按钮)
 
-页面就两个区块、对应三个操作;**没有页面标题**(导航已表明位置);所有操作**立即 PUT** 生效,
+本页就两个区块、对应三个操作;agent-ui 三个页面都靠导航标识位置、**不再有页面标题**;
+所有操作**立即 PUT** 生效,
 无“保存并应用”/dirty/`beforeunload`;弹窗统一 `sm:max-w-3xl`(必须带 `sm:` 才能覆盖 shadcn 自带的 `sm:max-w-sm`)。
 
 - **区块一 · 对外发布**:发到公网(HTTP 子域 / 公网 TCP)。header 右侧是 `已发布 N` + `发布端口` 按钮;
@@ -479,7 +480,7 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
 | 阶段 | 内容 | 产出 |
 |---|---|---|
 | ~~P0 接入~~ ✅ | 两个 app 各自接 shadcn CLI(§3)、主题(§4)、i18n 骨架(§6) | 深色/浅色可切、shadcn 默认外观、i18n 通道打通 |
-| ~~P1 骨架与组件~~ ✅ | 外壳/navbar 导航、`StatusBadge`/`StatCard`/`EmptyState`/`CopyButton`/`LiveIndicator`/`PageHeader`、全部文案抽取 | 结构统一、无硬编码文案 |
+| ~~P1 骨架与组件~~ ✅ | 外壳/navbar 导航、`StatusBadge`/`StatCard`/`EmptyState`/`CopyButton`/`LiveIndicator`、全部文案抽取 | 结构统一、无硬编码文案 |
 | ~~P2 页面重构~~ ✅ | §8 三页 + §9 两页 + 骨架屏 + 错误/空/成功四态 | 业务页焕新 |
 | **P3 体验** | live tail 时间轴/高亮、ECharts 流量曲线、移动端细节 | 手感 |
 | **P4 收尾** | reduced-motion、favicon/`theme-color`、缓存头、a11y 全量、代码分割(server-ui 单 chunk 已 >500KB) | 可交付 |
