@@ -77,7 +77,12 @@ pub fn load(path: &Path) -> Result<AgentState> {
     if let Ok(text) = std::fs::read_to_string(path) {
         let lines: Vec<&str> = text.lines().collect();
         if lines.first().map(|l| l.trim()) == Some("v2") {
-            if let Some(state) = parse_v2(&lines) {
+            if let Some(mut state) = parse_v2(&lines) {
+                // 旧版本可能没写节点名(第 5 行为空);补一个 LocalSend 风格的默认名并落盘。
+                if state.name.is_none() {
+                    state.name = Some(random_name());
+                    let _ = save(path, &state);
+                }
                 return Ok(state);
             }
         } else if let Some(state) = parse_legacy(&lines) {
@@ -215,4 +220,29 @@ fn from_hex_vec(s: &str) -> Option<Vec<u8>> {
         out.push(u8::from_str_radix(s.get(i..i + 2)?, 16).ok()?);
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fills_in_a_missing_node_name() {
+        let dir = std::env::temp_dir().join(format!("telesh-state-{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = state_path(&dir);
+        // v2,sub域/session/过期都为空,节点名那一行也是空的。
+        std::fs::write(&path, format!("v2\n{}\n\n\n0\n\n", "00".repeat(32))).unwrap();
+
+        let state = load(&path).expect("loads");
+        assert!(
+            state.name.as_deref().is_some_and(|n| !n.trim().is_empty()),
+            "a handle name should be generated"
+        );
+
+        // 已落盘:再读一次拿到同一个名字,而不是重新生成。
+        let again = load(&path).expect("reloads");
+        assert_eq!(again.name, state.name);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

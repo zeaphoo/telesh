@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 
 import { StatusDot } from '@/components/status-badge'
+import { formatAccount } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 const TONE = { online: 'success', connecting: 'warning', offline: 'danger' }
@@ -21,8 +22,11 @@ export function AccountIndicator({ account, className }) {
       <StatusDot tone={tone} pulse={state !== 'offline'} />
       {online ? (
         <>
-          <span className="shrink-0 font-mono text-base font-medium tabular-nums">
-            {account?.account}
+          <span
+            className="shrink-0 font-mono text-base font-medium tabular-nums"
+            title={account?.account || ''}
+          >
+            {formatAccount(account?.account)}
           </span>
           {account?.display_name && (
             <>

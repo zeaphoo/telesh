@@ -87,6 +87,7 @@ async fn main() -> Result<()> {
         control_addr.clone(),
         dataroot.display().to_string(),
         *iroh::SecretKey::from_bytes(&state.secret_key).public().as_bytes(),
+        state.name.clone(),
     );
 
     let creds = daemon::Credentials {

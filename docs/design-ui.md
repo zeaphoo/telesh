@@ -431,12 +431,12 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
 
 ### 9.4 账户与登录状态
 
-后端 `crates/telesh/src/account.rs` 保存 `AccountInfo` 快照(`daemon` 重连前置 `connecting`、
-登录成功置 `online`、断线置 `offline`;控制服务器/数据目录/公钥启动时写入),新增
-`GET /api/account`。UI:navbar **只保留这一个状态圆点**(在线时显 `账户句柄 – 显示名`,否则显状态文案),
-数值区(请求数/流量)定宽 + `tabular-nums`,避免轮询刷新时导航栏抖动;
-另有“账户”页列出登录状态、账户、显示名、控制服务器、身份公钥(可复制)、会话过期、
-最近登录、数据目录与最近错误。
+后端 `crates/telesh/src/account.rs` 保存 `AccountInfo` 快照(`daemon` 重连/登录/断线时更新;
+控制服务器、数据目录、公钥、本机节点名启动时写入),新增 `GET /api/account`。节点名缺失时
+`state::load` 会补一个 LocalSend 风格的默认名并落盘,服务端没返回显示名则回退本机名;
+账号句柄按 `000-012-345` 每 3 位加短横线显示。UI:navbar 只保留一个状态圆点,显示
+`账号 – 显示名`(否则状态文案),数值区定宽 + `tabular-nums` 避免抖动;另有“账户”页列出
+登录状态、账户、显示名、控制服务器、身份公钥(可复制)、会话过期、最近登录、数据目录与最近错误。
 
 ### 9.5 语言
 

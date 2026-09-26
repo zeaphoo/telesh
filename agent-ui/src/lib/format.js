@@ -21,3 +21,10 @@ export function formatDuration(secs) {
   const h = Math.floor(m / 60)
   return `${h}h ${m % 60}m`
 }
+
+/** 9 位账户句柄 -> `000-012-345`(每 3 位一组)。非纯数字原样返回。 */
+export function formatAccount(account) {
+  const s = String(account ?? '')
+  if (!/^\d+$/.test(s)) return s
+  return s.replace(/(\d{3})(?=\d)/g, '$1-')
+}

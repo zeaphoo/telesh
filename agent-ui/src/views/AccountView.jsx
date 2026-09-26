@@ -12,6 +12,7 @@ import {
   CardTitle,
 } from '../components/ui/card'
 import { cn } from '../lib/utils'
+import { formatAccount } from '../lib/format'
 import { useAgent } from '../store/useAgent'
 
 const TONE = { online: 'success', connecting: 'warning', offline: 'danger' }
@@ -75,7 +76,7 @@ export default function AccountView() {
               <Field label={t('account.fields.account')} mono>
                 {account.account ? (
                   <span className="inline-flex items-center gap-1">
-                    {account.account}
+                    {formatAccount(account.account)}
                     <CopyButton value={account.account} />
                   </span>
                 ) : (

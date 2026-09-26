@@ -17,6 +17,8 @@ pub struct AccountInfo {
     pub control_server: String,
     /// 数据目录。
     pub dataroot: String,
+    /// 本机节点名(LocalSend 风格)。服务端没返回显示名时用它。
+    pub node_name: Option<String>,
     /// 本机身份公钥(hex,64 字符);同时就是账户密钥。
     pub public_key: String,
     /// `connecting` | `online` | `offline`。
@@ -52,11 +54,17 @@ fn now_secs() -> u64 {
 }
 
 /// 启动时写入静态信息。
-pub fn init(control_server: String, dataroot: String, public_key: [u8; 32]) {
+pub fn init(
+    control_server: String,
+    dataroot: String,
+    public_key: [u8; 32],
+    node_name: Option<String>,
+) {
     let mut info = cell().lock().unwrap();
     info.control_server = control_server;
     info.dataroot = dataroot;
     info.public_key = to_hex(&public_key);
+    info.node_name = node_name;
     info.state = STATE_CONNECTING.to_string();
 }
 
@@ -65,11 +73,17 @@ pub fn set_connecting() {
     cell().lock().unwrap().state = STATE_CONNECTING.to_string();
 }
 
-/// 登录成功。
+/// 登录成功。服务端没给显示名时回退到本机节点名(它自己会生成 LocalSend 风格的默认名)。
 pub fn set_online(account: String, display_name: String, session_expires_at: u64) {
     let mut info = cell().lock().unwrap();
+    let fallback = info.node_name.clone();
+    let server_name = display_name.trim().to_string();
+    info.display_name = if server_name.is_empty() {
+        fallback
+    } else {
+        Some(server_name)
+    };
     info.account = Some(account);
-    info.display_name = Some(display_name);
     info.session_expires_at = session_expires_at;
     info.last_login_at = now_secs();
     info.last_error = None;
