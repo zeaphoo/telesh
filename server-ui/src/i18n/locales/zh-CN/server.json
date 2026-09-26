@@ -1,0 +1,47 @@
+{
+  "title": "telesh",
+  "nav": {
+    "overview": "总览",
+    "clients": "客户端",
+    "tunnels": "隧道"
+  },
+  "overview": {
+    "syncedAt": "同步于 {{time}} · 每 3 秒自动刷新",
+    "agentsOnline": "在线 agent",
+    "connected": "{{n}} 个已连接",
+    "tunnels": "隧道",
+    "httpTcp": "{{http}} HTTP · {{tcp}} TCP",
+    "activeConnections": "活跃连接",
+    "trafficIn": "入站流量",
+    "trafficOut": "出站流量",
+    "httpRequests": "HTTP 请求",
+    "liveTunnels": "活跃隧道",
+    "liveTunnelsDesc": "当前服务端上的 HTTP / TCP 隧道",
+    "viewAll": "查看全部",
+    "noTunnels": "当前没有隧道。运行一个 agent 就会出现在这里。"
+  },
+  "clients": {
+    "description": "当前连接到本服务端的 agent",
+    "title": "在线 agent",
+    "count": "{{n}} 个已连接",
+    "columns": {
+      "subdomain": "子域",
+      "agentId": "Agent ID",
+      "online": "在线时长"
+    },
+    "empty": "没有已连接的 agent。"
+  },
+  "tunnels": {
+    "description": "本服务端注册的全部隧道",
+    "title": "活跃隧道",
+    "count": "共 {{n}} 条",
+    "columns": {
+      "type": "类型",
+      "publicEntry": "公网入口",
+      "trafficIn": "入站",
+      "trafficOut": "出站",
+      "status": "状态"
+    },
+    "empty": "没有已注册的隧道。"
+  }
+}

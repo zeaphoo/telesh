@@ -1,16 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRightLeft,
-  Check,
   Globe,
   Loader2,
   Network,
   Plus,
+  RotateCcw,
   Save,
   Trash2,
 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
-import { Badge } from '../components/ui/badge'
+import { EmptyState } from '../components/empty-state'
+import { PageHeader } from '../components/page-header'
+import { StatusBadge } from '../components/status-badge'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog'
 import { Button } from '../components/ui/button'
 import {
   Card,
@@ -27,17 +40,10 @@ import {
   TableHeader,
   TableRow,
 } from '../components/ui/table'
+import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useAgent } from '../store/useAgent'
 
-const KINDS = [
-  { value: 'none', label: '不发布' },
-  { value: 'http', label: 'HTTP' },
-  { value: 'tcp', label: 'TCP' },
-  { value: 'p2p', label: 'P2P' },
-  { value: 'mirror', label: '镜像' },
-]
-
-const KIND_LABEL = Object.fromEntries(KINDS.map((k) => [k.value, k.label]))
+const KINDS = ['none', 'http', 'tcp', 'p2p', 'mirror']
 
 const SELECT_CLS = 'h-8 rounded-md border border-input bg-background px-2 text-xs'
 const INPUT_CLS = 'h-8 w-full rounded-md border border-input bg-background px-2 text-xs'
@@ -50,24 +56,31 @@ const EMPTY_CFG = {
   remote: '',
 }
 
-function stateMeta(state) {
-  switch (state) {
-    case 'live':
-      return { variant: 'success', label: 'live' }
-    case 'pending':
-      return { variant: 'secondary', label: 'pending' }
-    case 'error':
-      return { variant: 'destructive', label: 'error' }
-    case 'target_gone':
-      return { variant: 'outline', label: 'target gone' }
-    default:
-      return { variant: 'outline', label: state || '—' }
-  }
+/**
+ * 把条目规范成可比较的形状:只保留 UI 能编辑的字段,按 kind + 端口排序。
+ * 服务端返回的 EntryStatus 会多出 state/detail,这里忽略。
+ * 依据:`daemon::publish_status` 存的是 desired entry 的 clone,字段不会被改写。
+ */
+function canonicalize(entries) {
+  return entries
+    .filter((e) => e && e.kind)
+    .map((e) => {
+      const out = { kind: e.kind, local_port: Number(e.local_port) }
+      if (e.kind === 'http' && e.sub_domain) out.sub_domain = String(e.sub_domain)
+      if (e.kind === 'tcp' && e.remote_port != null && e.remote_port !== '') {
+        out.remote_port = Number(e.remote_port)
+      }
+      if (e.kind === 'p2p' && e.name) out.name = String(e.name)
+      if (e.kind === 'mirror' && e.remote) out.remote = String(e.remote)
+      return out
+    })
+    .sort((a, b) => a.kind.localeCompare(b.kind) || a.local_port - b.local_port)
 }
+
+const signature = (entries) => JSON.stringify(canonicalize(entries))
 
 function StatusCell({ entry }) {
   if (!entry) return <span className="text-xs text-muted-foreground">—</span>
-  const meta = stateMeta(entry.state)
   const detail =
     entry.detail == null
       ? ''
@@ -76,7 +89,7 @@ function StatusCell({ entry }) {
         : JSON.stringify(entry.detail)
   return (
     <div className="flex min-w-0 flex-col items-start gap-0.5">
-      <Badge variant={meta.variant}>{meta.label}</Badge>
+      <StatusBadge state={entry.state} />
       {detail && (
         <span className="max-w-52 truncate text-xs text-muted-foreground" title={detail}>
           {detail}
@@ -88,6 +101,8 @@ function StatusCell({ entry }) {
 
 /** Ports of this machine + remote-service mirroring. */
 export default function PublishView() {
+  const { t } = useTranslation()
+  const { t: tc } = useTranslation('common')
   const {
     ports,
     portsError,
@@ -104,21 +119,17 @@ export default function PublishView() {
   const [mirrors, setMirrors] = useState([])
   const [mirrorForm, setMirrorForm] = useState({ remote: '', local_port: '' })
   const [mirrorWarn, setMirrorWarn] = useState(null)
+  const [filter, setFilter] = useState('all')
+  const [removeAt, setRemoveAt] = useState(null)
   const seeded = useRef(false)
 
-  // Seed the draft from the server's desired state exactly once, so the 2s
-  // poll can refresh runtime status without clobbering in-progress edits.
-  useEffect(() => {
-    if (seeded.current || !publishLoaded) return
+  const seedFrom = (list) => {
     const next = {}
     const mirrorRows = []
-    for (const e of publish) {
+    for (const e of list) {
       if (!e || e.kind == null || e.local_port == null) continue
       if (e.kind === 'mirror') {
-        mirrorRows.push({
-          local_port: String(e.local_port),
-          remote: e.remote ?? '',
-        })
+        mirrorRows.push({ local_port: String(e.local_port), remote: e.remote ?? '' })
         continue
       }
       next[String(e.local_port)] = {
@@ -131,6 +142,13 @@ export default function PublishView() {
     }
     setCfg(next)
     setMirrors(mirrorRows)
+  }
+
+  // Seed the draft from the server's desired state exactly once, so the 2s
+  // poll can refresh runtime status without clobbering in-progress edits.
+  useEffect(() => {
+    if (seeded.current || !publishLoaded) return
+    seedFrom(publish)
     seeded.current = true
   }, [publishLoaded, publish])
 
@@ -180,6 +198,8 @@ export default function PublishView() {
       [String(port)]: { ...EMPTY_CFG, ...(c[String(port)] || {}), ...patch },
     }))
 
+  const isPublished = (port) => cfgFor(port).kind !== 'none'
+
   // Desired-state array sent to PUT /api/publish: input fields only.
   const desired = useMemo(() => {
     const out = []
@@ -204,29 +224,61 @@ export default function PublishView() {
     return out
   }, [rows, cfg, mirrors])
 
+  const dirty = publishLoaded && signature(desired) !== signature(publish)
+
+  // Warn before leaving with unsaved changes.
+  useEffect(() => {
+    if (!dirty) return undefined
+    const handler = (e) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [dirty])
+
+  const visibleRows = useMemo(() => {
+    switch (filter) {
+      case 'listening':
+        return rows.filter((r) => r.present)
+      case 'http':
+        return rows.filter((r) => r.http_hint)
+      case 'published':
+        return rows.filter((r) => isPublished(r.port))
+      default:
+        return rows
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, filter, cfg])
+
   const statusFor = (kind, port) =>
     publish.find((e) => e && e.kind === kind && Number(e.local_port) === Number(port)) || null
   const entriesForPort = (port) =>
     publish.filter((e) => e && Number(e.local_port) === Number(port))
+
+  const undo = () => {
+    seedFrom(publish)
+    setMirrorForm({ remote: '', local_port: '' })
+    setMirrorWarn(null)
+  }
 
   const addMirror = () => {
     const remote = mirrorForm.remote.trim()
     const rawPort = mirrorForm.local_port.trim()
     const port = Number(rawPort)
     if (!remote) {
-      setMirrorWarn('请填写远端服务 ACCOUNT/NAME')
+      setMirrorWarn(t('publish.mirrors.warnRemote'))
       return
     }
     if (!rawPort || !Number.isFinite(port) || port <= 0 || port > 65535) {
-      setMirrorWarn('请填写有效的本地端口 (1-65535)')
+      setMirrorWarn(t('publish.mirrors.warnPort'))
       return
     }
     if (mirrors.some((m) => Number(m.local_port) === port)) {
-      setMirrorWarn(`本地端口 ${port} 已在镜像列表中`)
+      setMirrorWarn(t('publish.mirrors.warnDuplicate', { port }))
       return
     }
-    const row = { local_port: String(port), remote }
-    setMirrors((m) => [...m, row])
+    setMirrors((m) => [...m, { local_port: String(port), remote }])
     setMirrorForm({ remote: '', local_port: '' })
     setMirrorWarn(null)
   }
@@ -239,7 +291,7 @@ export default function PublishView() {
             className={INPUT_CLS}
             value={c.sub_domain}
             onChange={(e) => setCfgFor(port, { sub_domain: e.target.value })}
-            placeholder="子域,留空随机"
+            placeholder={t('publish.ports.placeholders.subDomain')}
           />
         )
       case 'tcp':
@@ -251,7 +303,7 @@ export default function PublishView() {
             max="65535"
             value={c.remote_port}
             onChange={(e) => setCfgFor(port, { remote_port: e.target.value })}
-            placeholder="公网端口,留空分配"
+            placeholder={t('publish.ports.placeholders.remotePort')}
           />
         )
       case 'p2p':
@@ -260,7 +312,7 @@ export default function PublishView() {
             className={INPUT_CLS}
             value={c.name}
             onChange={(e) => setCfgFor(port, { name: e.target.value })}
-            placeholder="服务名"
+            placeholder={t('publish.ports.placeholders.name')}
           />
         )
       case 'mirror':
@@ -269,7 +321,7 @@ export default function PublishView() {
             className={INPUT_CLS}
             value={c.remote}
             onChange={(e) => setCfgFor(port, { remote: e.target.value })}
-            placeholder="ACCOUNT/NAME"
+            placeholder={t('publish.ports.placeholders.remote')}
           />
         )
       default:
@@ -277,62 +329,68 @@ export default function PublishView() {
     }
   }
 
+  const FILTERS = ['all', 'listening', 'http', 'published']
+
   return (
-    <div className="mx-auto max-w-6xl space-y-4 px-6 py-6">
+    <div className="mx-auto max-w-5xl space-y-4 px-4 py-6 sm:px-6">
+      <PageHeader title={t('nav.publish')} />
+
       {publishError && (
         <Card>
-          <CardContent className="py-3 text-sm text-muted-foreground">
-            发布接口错误: {publishError}
+          <CardContent className="text-sm text-muted-foreground">
+            {t('publish.ports.publishError', { error: publishError })}
           </CardContent>
         </Card>
       )}
 
       {/* 1. Local ports */}
       <Card>
-        <CardHeader className="flex-row items-center justify-between space-y-0 gap-3">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Network className="size-4" /> 本机端口
-            </CardTitle>
-            <CardDescription>
-              {rows.length} 个端口 · 选择发布方式并填写参数,然后点“保存并应用”
-            </CardDescription>
-          </div>
-          <Button onClick={() => savePublish(desired)} disabled={publishing} className="gap-1">
-            {publishing ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Save className="size-4" />
-            )}
-            {publishing ? '保存中…' : '保存并应用'}
-          </Button>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Network className="size-4" /> {t('publish.ports.title')}
+          </CardTitle>
+          <CardDescription>{t('publish.ports.description', { n: rows.length })}</CardDescription>
         </CardHeader>
-        <CardContent className="p-0">
+        <CardContent className="space-y-3 p-0">
+          <div className="px-6">
+            <Tabs value={filter} onValueChange={setFilter}>
+              <TabsList>
+                {FILTERS.map((f) => (
+                  <TabsTrigger key={f} value={f}>
+                    {t(`publish.ports.filters.${f}`)}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          </div>
           {portsError && (
-            <p className="px-6 pb-3 text-xs text-muted-foreground">
-              无法读取 /api/ports: {portsError}
+            <p className="px-6 text-xs text-muted-foreground">
+              {t('publish.ports.portsError', { error: portsError })}
             </p>
           )}
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-24">端口</TableHead>
-                <TableHead className="w-32">进程</TableHead>
-                <TableHead className="w-24">PID</TableHead>
-                <TableHead className="w-40">发布方式</TableHead>
-                <TableHead className="w-56">参数</TableHead>
-                <TableHead>状态</TableHead>
+                <TableHead className="w-24">{t('publish.ports.columns.port')}</TableHead>
+                <TableHead className="w-32">{t('publish.ports.columns.process')}</TableHead>
+                <TableHead className="w-24">{t('publish.ports.columns.pid')}</TableHead>
+                <TableHead className="w-40">{t('publish.ports.columns.kind')}</TableHead>
+                <TableHead className="w-56">{t('publish.ports.columns.param')}</TableHead>
+                <TableHead>{t('publish.ports.columns.status')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.length === 0 ? (
+              {visibleRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                    {portsError ? '端口列表不可用。' : '未发现监听中的本机端口。'}
+                  <TableCell colSpan={6} className="p-0">
+                    <EmptyState
+                      icon={Network}
+                      title={portsError ? t('publish.ports.unavailable') : t('publish.ports.empty')}
+                    />
                   </TableCell>
                 </TableRow>
               ) : (
-                rows.map((r) => {
+                visibleRows.map((r) => {
                   const c = cfgFor(r.port)
                   const status = c.kind === 'none' ? null : statusFor(c.kind, r.port)
                   const existing = c.kind === 'none' ? entriesForPort(r.port) : []
@@ -341,8 +399,8 @@ export default function PublishView() {
                       <TableCell className="font-mono text-xs">
                         {r.port}
                         {r.http_hint && (
-                          <span title="疑似 HTTP 服务">
-                            <Globe className="ml-1 inline size-3 text-emerald-600" />
+                          <span title={t('publish.ports.detectedHttp')}>
+                            <Globe className="ml-1 inline size-3 text-success" />
                           </span>
                         )}
                       </TableCell>
@@ -358,15 +416,18 @@ export default function PublishView() {
                             onChange={(e) => setCfgFor(r.port, { kind: e.target.value })}
                           >
                             {KINDS.map((k) => (
-                              <option key={k.value} value={k.value}>
-                                {k.label}
+                              <option key={k} value={k}>
+                                {k === 'none' ? t('publish.ports.kindNone') : tc(`kind.${k}`)}
                               </option>
                             ))}
                           </select>
                           <div className="flex flex-wrap items-center gap-1">
                             {r.probed && r.http_hint ? (
                               <>
-                                <Badge variant="success">检测到 HTTP</Badge>
+                                <StatusBadge
+                                  state="live"
+                                  label={t('publish.ports.detectedHttp')}
+                                />
                                 {r.server && (
                                   <span
                                     className="max-w-28 truncate text-xs text-muted-foreground"
@@ -378,9 +439,16 @@ export default function PublishView() {
                               </>
                             ) : (
                               r.http_hint &&
-                              c.kind !== 'http' && <Badge variant="success">建议 HTTP</Badge>
+                              c.kind !== 'http' && (
+                                <StatusBadge
+                                  state="pending"
+                                  label={t('publish.ports.suggestHttp')}
+                                />
+                              )
                             )}
-                            {!r.present && <Badge variant="outline">未监听</Badge>}
+                            {!r.present && (
+                              <StatusBadge state="offline" label={tc('status.notListening')} />
+                            )}
                           </div>
                         </div>
                       </TableCell>
@@ -392,7 +460,10 @@ export default function PublishView() {
                           <div className="flex flex-col gap-1">
                             {existing.map((e, i) => (
                               <div key={i} className="flex items-center gap-1.5">
-                                <Badge variant="outline">{KIND_LABEL[e.kind] || e.kind}</Badge>
+                                <StatusBadge
+                                  state="pending"
+                                  label={tc(`kind.${e.kind}`, { defaultValue: e.kind })}
+                                />
                                 <StatusCell entry={e} />
                               </div>
                             ))}
@@ -414,12 +485,9 @@ export default function PublishView() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
-            <ArrowRightLeft className="size-4" /> 镜像远端服务
+            <ArrowRightLeft className="size-4" /> {t('publish.mirrors.title')}
           </CardTitle>
-          <CardDescription>
-            把远端服务镜像到本地端口:填写 ACCOUNT/NAME 与本地监听端口后加入列表。这条连接
-            用本机 agent 自己的身份登录服务端,不需要额外密钥。
-          </CardDescription>
+          <CardDescription>{t('publish.mirrors.description')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
@@ -427,7 +495,7 @@ export default function PublishView() {
               className={`${INPUT_CLS} w-56`}
               value={mirrorForm.remote}
               onChange={(e) => setMirrorForm((f) => ({ ...f, remote: e.target.value }))}
-              placeholder="ACCOUNT/NAME"
+              placeholder={t('publish.mirrors.remotePlaceholder')}
             />
             <input
               className={`${INPUT_CLS} w-36`}
@@ -436,36 +504,32 @@ export default function PublishView() {
               max="65535"
               value={mirrorForm.local_port}
               onChange={(e) => setMirrorForm((f) => ({ ...f, local_port: e.target.value }))}
-              placeholder="本地端口"
+              placeholder={t('publish.mirrors.localPortPlaceholder')}
             />
             <Button variant="outline" size="sm" onClick={addMirror} className="gap-1">
-              <Plus className="size-3.5" /> 加入列表
+              <Plus className="size-3.5" /> {t('publish.mirrors.add')}
             </Button>
           </div>
-          {mirrorWarn && <p className="text-xs text-red-600">{mirrorWarn}</p>}
+          {mirrorWarn && <p className="text-xs text-destructive">{mirrorWarn}</p>}
 
           {mirrors.length === 0 ? (
-            <p className="py-4 text-center text-sm text-muted-foreground">
-              尚未添加镜像。加入后点上方“保存并应用”生效。
-            </p>
+            <EmptyState icon={ArrowRightLeft} description={t('publish.mirrors.empty')} />
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>远端服务</TableHead>
-                  <TableHead className="w-32">本地端口</TableHead>
-                  <TableHead>状态</TableHead>
+                  <TableHead>{t('publish.mirrors.columns.remote')}</TableHead>
+                  <TableHead className="w-32">
+                    {t('publish.mirrors.columns.localPort')}
+                  </TableHead>
+                  <TableHead>{t('publish.mirrors.columns.status')}</TableHead>
                   <TableHead className="w-16" />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {mirrors.map((m, i) => (
                   <TableRow key={`${m.local_port}-${i}`}>
-                    <TableCell className="font-mono text-xs">
-                      <div className="flex items-center gap-1.5">
-                        <span>{m.remote || '—'}</span>
-                      </div>
-                    </TableCell>
+                    <TableCell className="font-mono text-xs">{m.remote || '—'}</TableCell>
                     <TableCell className="font-mono text-xs">{m.local_port}</TableCell>
                     <TableCell>
                       <StatusCell entry={statusFor('mirror', m.local_port)} />
@@ -475,9 +539,9 @@ export default function PublishView() {
                         variant="ghost"
                         size="sm"
                         className="gap-1 text-muted-foreground"
-                        onClick={() => setMirrors((list) => list.filter((_, j) => j !== i))}
+                        onClick={() => setRemoveAt(i)}
                       >
-                        <Trash2 className="size-3.5" /> 移除
+                        <Trash2 className="size-3.5" /> {tc('action.remove')}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -488,27 +552,67 @@ export default function PublishView() {
         </CardContent>
       </Card>
 
-      {/* Save / status footer */}
-      <Card>
-        <CardContent className="flex flex-wrap items-center gap-3 py-3">
-          <Button onClick={() => savePublish(desired)} disabled={publishing} className="gap-1">
+      {/* Sticky save bar */}
+      <div className="sticky bottom-0 z-30 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            onClick={() => savePublish(desired)}
+            disabled={publishing || !dirty}
+            className="gap-1"
+          >
             {publishing ? (
               <Loader2 className="size-4 animate-spin" />
             ) : (
               <Save className="size-4" />
             )}
-            {publishing ? '保存中…' : '保存并应用'}
+            {tc('action.saveApply')}
           </Button>
-          <span className="text-xs text-muted-foreground">
-            待发布 {desired.length} 项 · 状态每 2 秒自动刷新
-          </span>
-          {lastSavedAt && !publishError && (
-            <Badge variant="success">
-              <Check /> 已保存 {new Date(lastSavedAt).toLocaleTimeString()}
-            </Badge>
+          {dirty && (
+            <Button variant="ghost" size="sm" onClick={undo} className="gap-1">
+              <RotateCcw className="size-3.5" /> {tc('action.undo')}
+            </Button>
           )}
-        </CardContent>
-      </Card>
+          <span className="text-xs text-muted-foreground">
+            {t('publish.footer.pending', { n: desired.length })} ·{' '}
+            {t('publish.footer.autoRefresh')}
+          </span>
+          {dirty ? (
+            <StatusBadge tone="warning" label={t('publish.footer.unsaved')} />
+          ) : (
+            lastSavedAt &&
+            !publishError && (
+              <StatusBadge
+                tone="success"
+                label={`${tc('action.saved')} ${new Date(lastSavedAt).toLocaleTimeString()}`}
+              />
+            )
+          )}
+        </div>
+      </div>
+
+      <AlertDialog open={removeAt != null} onOpenChange={(open) => !open && setRemoveAt(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('publish.mirrors.removeTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('publish.mirrors.removeConfirm', {
+                remote: removeAt != null ? mirrors[removeAt]?.remote || '' : '',
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{tc('action.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setMirrors((list) => list.filter((_, j) => j !== removeAt))
+                setRemoveAt(null)
+              }}
+            >
+              {tc('action.remove')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

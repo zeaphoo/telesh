@@ -18,6 +18,7 @@ function errText(e) {
 export const useAgent = create((set, get) => ({
   loading: true,
   error: null,
+  lastSync: null,
   tunnels: [],
   requests: [],
   selected: null,
@@ -42,7 +43,7 @@ export const useAgent = create((set, get) => ({
         api('/api/tunnels'),
         api('/api/requests'),
       ])
-      set({ tunnels, requests, loading: false, error: null })
+      set({ tunnels, requests, loading: false, error: null, lastSync: Date.now() })
     } catch (e) {
       set({ error: errText(e), loading: false })
     }
@@ -74,6 +75,7 @@ export const useAgent = create((set, get) => ({
       patch.publishError = errText(pubRes.reason)
     }
     set(patch)
+    if (patch.portsError == null && patch.publishError == null) set({ lastSync: Date.now() })
   },
 
   refreshAll: async () => {

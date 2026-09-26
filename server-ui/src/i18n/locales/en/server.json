@@ -1,0 +1,47 @@
+{
+  "title": "telesh",
+  "nav": {
+    "overview": "Overview",
+    "clients": "Clients",
+    "tunnels": "Tunnels"
+  },
+  "overview": {
+    "syncedAt": "synced at {{time}} · auto-refresh 3s",
+    "agentsOnline": "Agents online",
+    "connected": "{{n}} connected",
+    "tunnels": "Tunnels",
+    "httpTcp": "{{http}} http · {{tcp}} tcp",
+    "activeConnections": "Active connections",
+    "trafficIn": "Traffic in",
+    "trafficOut": "Traffic out",
+    "httpRequests": "HTTP requests",
+    "liveTunnels": "Live tunnels",
+    "liveTunnelsDesc": "Current http/tcp tunnels on this server",
+    "viewAll": "View all",
+    "noTunnels": "No tunnels right now. Run an agent to see it here."
+  },
+  "clients": {
+    "description": "Agents currently connected to this server",
+    "title": "Online agents",
+    "count": "{{n}} connected",
+    "columns": {
+      "subdomain": "Subdomain",
+      "agentId": "Agent ID",
+      "online": "Online"
+    },
+    "empty": "No agents connected."
+  },
+  "tunnels": {
+    "description": "All tunnels registered on this server",
+    "title": "Active tunnels",
+    "count": "{{n}} total",
+    "columns": {
+      "type": "Type",
+      "publicEntry": "Public entry",
+      "trafficIn": "Traffic in",
+      "trafficOut": "Traffic out",
+      "status": "Status"
+    },
+    "empty": "No tunnels registered."
+  }
+}

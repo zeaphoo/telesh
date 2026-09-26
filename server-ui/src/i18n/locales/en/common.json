@@ -1,0 +1,45 @@
+{
+  "status": {
+    "live": "Live",
+    "pending": "Pending",
+    "error": "Error",
+    "target_gone": "Target gone",
+    "notListening": "Not listening",
+    "online": "Online",
+    "offline": "Offline"
+  },
+  "kind": {
+    "http": "HTTP",
+    "tcp": "TCP",
+    "p2p": "P2P",
+    "mirror": "Mirror"
+  },
+  "action": {
+    "refresh": "Refresh",
+    "save": "Save",
+    "cancel": "Cancel",
+    "close": "Close",
+    "copy": "Copy",
+    "copied": "Copied",
+    "remove": "Remove",
+    "undo": "Undo",
+    "saved": "Saved",
+    "menu": "Menu",
+    "expandSidebar": "Expand sidebar",
+    "collapseSidebar": "Collapse sidebar",
+    "theme": "Theme",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "themeSystem": "System",
+    "language": "Language"
+  },
+  "live": {
+    "connected": "Connected",
+    "connectedAgo": "Connected · {{seconds}}s ago",
+    "disconnected": "Disconnected"
+  },
+  "error": {
+    "api": "Cannot reach the server API"
+  },
+  "loading": "Loading…"
+}

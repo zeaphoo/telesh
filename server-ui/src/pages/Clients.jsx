@@ -1,6 +1,11 @@
-import { Server } from 'lucide-react'
+import { Users } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
-import { Badge } from '../components/ui/badge'
+import { CopyButton } from '../components/copy-button'
+import { EmptyState } from '../components/empty-state'
+import { PageHeader } from '../components/page-header'
+import { StatusBadge } from '../components/status-badge'
+import { TableSkeleton } from '../components/table-skeleton'
 import {
   Card,
   CardContent,
@@ -16,66 +21,69 @@ import {
   TableHeader,
   TableRow,
 } from '../components/ui/table'
-import { formatDuration } from '../lib/utils'
+import { formatDuration } from '../lib/format'
 import { useDashboard } from '../store/useDashboard'
 
 export default function Clients() {
-  const { clients, error } = useDashboard()
+  const { t } = useTranslation()
+  const { t: tc } = useTranslation('common')
+  const { clients, error, loading } = useDashboard()
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">Clients</h1>
-        <p className="text-sm text-muted-foreground">
-          Agents currently connected to this server
-        </p>
-      </div>
+    <div className="mx-auto max-w-5xl space-y-4 px-4 py-6 sm:px-6">
+      <PageHeader title={t('nav.clients')} description={t('clients.description')} />
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Online agents</CardTitle>
-          <CardDescription>{clients.length} connected</CardDescription>
+          <CardTitle className="text-base">{t('clients.title')}</CardTitle>
+          <CardDescription>{t('clients.count', { n: clients.length })}</CardDescription>
         </CardHeader>
-        <CardContent>
-          {error ? (
-            <p className="text-sm text-muted-foreground">{error}</p>
-          ) : (
-            <Table>
-              <TableHeader>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t('clients.columns.subdomain')}</TableHead>
+                <TableHead>{t('clients.columns.agentId')}</TableHead>
+                <TableHead>{t('clients.columns.online')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {loading && !error && clients.length === 0 ? (
+                <TableSkeleton columns={3} />
+              ) : error || clients.length === 0 ? (
                 <TableRow>
-                  <TableHead>Subdomain</TableHead>
-                  <TableHead>Agent ID</TableHead>
-                  <TableHead>Online</TableHead>
+                  <TableCell colSpan={3} className="p-0">
+                    <EmptyState
+                      icon={Users}
+                      description={error ? `${tc('error.api')}: ${error}` : t('clients.empty')}
+                    />
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {clients.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={3} className="text-muted-foreground">
-                      No agents connected.
+              ) : (
+                clients.map((c) => (
+                  <TableRow key={c.agent_id}>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        <StatusBadge tone="success" label={c.sub_domain} />
+                        <CopyButton value={c.sub_domain} />
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">
+                      <div className="flex max-w-64 items-center gap-1">
+                        <span className="truncate" title={c.agent_id}>
+                          {c.agent_id}
+                        </span>
+                        <CopyButton value={c.agent_id} />
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {formatDuration(c.online_secs)}
                     </TableCell>
                   </TableRow>
-                ) : (
-                  clients.map((c) => (
-                    <TableRow key={c.agent_id}>
-                      <TableCell className="font-mono text-xs">
-                        <Badge variant="success" className="gap-1">
-                          <Server className="size-3" />
-                          {c.sub_domain}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {c.agent_id}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {formatDuration(c.online_secs)}
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          )}
+                ))
+              )}
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
     </div>

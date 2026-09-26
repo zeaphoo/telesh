@@ -1,62 +1,70 @@
 import { useEffect } from 'react'
-import { NavLink, Route, Routes } from 'react-router-dom'
+import { Activity, RefreshCw, Server, Waypoints } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { Route, Routes } from 'react-router-dom'
 
-import { cn } from './lib/utils'
+import { AppShell } from './components/app-shell'
+import { LiveIndicator } from './components/live-indicator'
+import { LocaleSwitcher } from './components/locale-switcher'
+import { ThemeToggle } from './components/theme-toggle'
+import { Button } from './components/ui/button'
+import { Toaster } from './components/ui/sonner'
 import Clients from './pages/Clients'
 import Overview from './pages/Overview'
 import Tunnels from './pages/Tunnels'
 import { useDashboard } from './store/useDashboard'
 
 const NAV = [
-  { to: '/', label: 'Overview', end: true },
-  { to: '/clients', label: 'Clients' },
-  { to: '/tunnels', label: 'Tunnels' },
+  { to: '/', labelKey: 'nav.overview', icon: Activity, end: true },
+  { to: '/clients', labelKey: 'nav.clients', icon: Server },
+  { to: '/tunnels', labelKey: 'nav.tunnels', icon: Waypoints },
 ]
 
 export default function App() {
+  const { t } = useTranslation()
+  const { t: tc } = useTranslation('common')
   const fetchAll = useDashboard((s) => s.fetchAll)
+  const error = useDashboard((s) => s.error)
+  const lastSync = useDashboard((s) => s.lastSync)
 
   // Auto-refresh every 3s while the page is open.
   useEffect(() => {
     fetchAll()
-    const t = setInterval(fetchAll, 3000)
-    return () => clearInterval(t)
+    const timer = setInterval(fetchAll, 3000)
+    return () => clearInterval(timer)
   }, [fetchAll])
 
-  return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className="border-b bg-card">
-        <div className="mx-auto flex h-14 max-w-6xl items-center gap-8 px-6">
-          <span className="text-lg font-semibold tracking-tight">telesh</span>
-          <nav className="flex gap-1">
-            {NAV.map((n) => (
-              <NavLink
-                key={n.to}
-                to={n.to}
-                end={n.end}
-                className={({ isActive }) =>
-                  cn(
-                    'rounded-md px-3 py-1.5 text-sm transition-colors',
-                    isActive
-                      ? 'bg-primary text-primary-foreground'
-                      : 'hover:bg-muted'
-                  )
-                }
-              >
-                {n.label}
-              </NavLink>
-            ))}
-          </nav>
-        </div>
-      </header>
+  const brand = (
+    <span className="flex items-center gap-2 text-sm font-semibold tracking-tight">
+      <Waypoints className="size-4" /> {t('title')}
+    </span>
+  )
 
-      <main className="mx-auto max-w-6xl px-6 py-8">
-        <Routes>
-          <Route path="/" element={<Overview />} />
-          <Route path="/clients" element={<Clients />} />
-          <Route path="/tunnels" element={<Tunnels />} />
-        </Routes>
-      </main>
-    </div>
+  const status = (
+    <span className="hidden md:flex">
+      <LiveIndicator online={!error} lastSync={lastSync} />
+    </span>
+  )
+
+  const actions = (
+    <>
+      <Button variant="ghost" size="sm" onClick={() => fetchAll()} className="gap-1">
+        <RefreshCw className="size-3.5" />
+        <span className="hidden sm:inline">{tc('action.refresh')}</span>
+      </Button>
+      <LocaleSwitcher />
+      <ThemeToggle />
+    </>
+  )
+
+  return (
+    <AppShell brand={brand} status={status} actions={actions} nav={NAV}>
+      <Routes>
+        <Route path="/" element={<Overview />} />
+        <Route path="/clients" element={<Clients />} />
+        <Route path="/tunnels" element={<Tunnels />} />
+      </Routes>
+      <Toaster richColors position="top-right" />
+    </AppShell>
   )
 }

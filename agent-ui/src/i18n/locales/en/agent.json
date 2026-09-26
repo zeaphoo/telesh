@@ -1,0 +1,94 @@
+{
+  "title": "telesh inspector",
+  "nav": {
+    "publish": "Ports & publishing",
+    "log": "Request log"
+  },
+  "header": {
+    "requests": "{{n}} requests"
+  },
+  "publish": {
+    "ports": {
+      "title": "Local ports",
+      "description": "{{n}} ports · pick a publish mode, fill in the parameters, then click “Save & apply”",
+      "portsError": "Cannot read /api/ports: {{error}}",
+      "publishError": "Publish API error: {{error}}",
+      "unavailable": "Port list unavailable.",
+      "empty": "No listening local ports found.",
+      "detectedHttp": "HTTP detected",
+      "suggestHttp": "HTTP suggested",
+      "kindNone": "Don't publish",
+      "columns": {
+        "port": "Port",
+        "process": "Process",
+        "pid": "PID",
+        "kind": "Mode",
+        "param": "Parameters",
+        "status": "Status"
+      },
+      "filters": {
+        "all": "All",
+        "listening": "Listening",
+        "http": "HTTP",
+        "published": "Published"
+      },
+      "placeholders": {
+        "subDomain": "Subdomain, blank = random",
+        "remotePort": "Public port, blank = assigned",
+        "name": "Service name",
+        "remote": "ACCOUNT/NAME"
+      }
+    },
+    "mirrors": {
+      "title": "Mirror remote services",
+      "description": "Mirror a remote service onto a local port: enter ACCOUNT/NAME and the local listening port, then add it to the list. This connection authenticates with this agent's own identity, no extra key needed.",
+      "remotePlaceholder": "ACCOUNT/NAME",
+      "localPortPlaceholder": "Local port",
+      "add": "Add",
+      "empty": "No mirrors yet. Add one, then click “Save & apply” above.",
+      "columns": {
+        "remote": "Remote service",
+        "localPort": "Local port",
+        "status": "Status"
+      },
+      "warnRemote": "Enter the remote service ACCOUNT/NAME",
+      "warnPort": "Enter a valid local port (1-65535)",
+      "warnDuplicate": "Local port {{port}} is already in the list",
+      "removeTitle": "Remove mirror",
+      "removeConfirm": "Remove mirror {{remote}}? Takes effect after saving."
+    },
+    "footer": {
+      "pending": "{{n}} pending",
+      "autoRefresh": "status refreshes every 2s",
+      "unsaved": "Unsaved changes"
+    }
+  },
+  "log": {
+    "count": "{{shown}} / {{total}} shown · latest 100",
+    "listTitle": "Requests",
+    "shortcuts": "j/k select · r replay · / filter",
+    "paused": "Paused",
+    "live": "Live",
+    "opaque": "(binary/opaque)",
+    "anyMethod": "any method",
+    "filterPlaceholder": "filter path/status…",
+    "empty": "No requests yet — hit your tunnel URL to see requests here.",
+    "emptyFiltered": "No requests match the filter.",
+    "detail": "Request detail",
+    "detailHint": "Select a request on the left",
+    "selectHint": "Click a request row to inspect its headers & body.",
+    "payloadRequest": "Request",
+    "payloadResponse": "Response",
+    "emptyPayload": "(empty)",
+    "replayTitle": "Replay",
+    "replayDescription": "Re-send the captured request straight to the local service (dev aid)",
+    "replaying": "Replaying…",
+    "columns": {
+      "time": "Time",
+      "method": "Method",
+      "path": "Path",
+      "status": "Status",
+      "ms": "ms"
+    }
+  }
+}
