@@ -54,8 +54,7 @@
     },
     "summary": {
       "published": "已发布 {{n}}",
-      "mirrors": "镜像 {{n}}",
-      "p2p": "P2P:{{mode}}"
+      "mirrors": "连接远程 {{n}}"
     },
     "dialog": {
       "title": "发布端口",
@@ -71,14 +70,15 @@
         "remotePort": "公网端口,留空分配"
       }
     },
-    "remoteTitle": "远程连接与 P2P",
-    "remoteDesc": "把远端服务镜像到本地端口,并控制哪些本地端口允许被远端 P2P 直连。",
+    "remoteTitle": "远程连接",
+    "remoteDesc": "连上远端服务,或决定哪些本地端口允许被远端连接。",
     "mirrors": {
       "title": "连接远程端口",
-      "desc": "把远端服务(ACCOUNT/NAME)镜像到本地监听端口。",
+      "desc": "把远端服务(ACCOUNT/NAME)接到本地端口;之后访问本地端口就等于访问远端服务。",
       "remotePlaceholder": "ACCOUNT/NAME",
       "localPortPlaceholder": "本地端口",
-      "add": "连接",
+      "confirm": "连接",
+      "dialogTitle": "连接远程端口",
       "empty": "还没有连接任何远程端口。",
       "columns": {
         "remote": "远端服务",
@@ -88,31 +88,29 @@
       "warnRemote": "请填写远端服务 ACCOUNT/NAME",
       "warnPort": "请填写有效的本地端口 (1-65535)",
       "warnDuplicate": "本地端口 {{port}} 已存在",
-      "dialogTitle": "连接远程端口",
-      "confirm": "连接",
-      "added": "已添加",
-      "removed": "已移除"
+      "added": "已连接",
+      "removed": "已断开"
     },
-    "p2p": {
-      "title": "P2P 入站规则",
-      "desc": "哪些本地端口允许被远端 peer 通过 P2P 直连(服务名 = 端口号)。",
+    "inbound": {
+      "title": "允许远程连接的本地端口",
+      "desc": "哪些本地端口可以被远端连接(对方用端口号作为服务名)。",
       "all": "全部端口",
-      "selected": "选择端口",
+      "selected": "仅选定端口",
       "none": "不允许",
-      "allHint": "当前 {{n}} 个在监听的本地端口会暴露给 P2P。",
-      "selectedHint": "已选择 {{n}} 个端口。",
-      "noneHint": "所有 P2P 入站都会被拒绝。",
+      "allSummary": "全部 {{n}} 个在监听的端口",
+      "selectedSummary": "已选 {{n}} 个端口",
+      "noneSummary": "不允许任何远程连接",
+      "emptySelected": "未选择任何端口,将不允许远程连接。",
+      "allHint": "当前 {{n}} 个在监听的本地端口都可被远端连接。",
+      "noneHint": "所有远程连接都会被拒绝。",
       "noPorts": "没有在监听的本地端口。",
-      "offlinePorts": "未监听但仍在规则里:{{ports}}",
+      "offlinePorts": "已选但未监听:{{ports}}",
       "configure": "设置",
-      "dialogTitle": "P2P 入站规则",
-      "save": "保存规则",
+      "dialogTitle": "允许远程连接的本地端口",
+      "save": "保存",
       "selectAll": "全选",
       "clear": "清空",
-      "summaryAll": "全部端口({{n}} 个在监听)",
-      "summarySelected": "选择端口(已选 {{n}} 个)",
-      "summaryNone": "不允许任何 P2P 入站",
-      "saved": "P2P 规则已更新"
+      "saved": "远程连接规则已更新"
     }
   },
   "log": {
@@ -127,7 +125,7 @@
     "empty": "还没有请求 —— 访问你的隧道地址就会出现在这里。",
     "emptyFiltered": "没有符合过滤条件的请求。",
     "detail": "请求详情",
-    "detailHint": "在左侧选择一条请求",
+    "detailHint": "在列表里选择一条请求",
     "selectHint": "点击一行请求查看它的请求头与正文。",
     "payloadRequest": "请求",
     "payloadResponse": "响应",

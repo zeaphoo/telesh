@@ -54,8 +54,7 @@
     },
     "summary": {
       "published": "{{n}} published",
-      "mirrors": "{{n}} mirrors",
-      "p2p": "P2P: {{mode}}"
+      "mirrors": "{{n}} connected"
     },
     "dialog": {
       "title": "Publish a port",
@@ -71,14 +70,15 @@
         "remotePort": "Public port, blank = assigned"
       }
     },
-    "remoteTitle": "Remote connections & P2P",
-    "remoteDesc": "Mirror remote services onto local ports, and control which local ports may be dialed over P2P.",
+    "remoteTitle": "Remote connections",
+    "remoteDesc": "Dial out to a remote service, or choose which local ports may be reached remotely.",
     "mirrors": {
       "title": "Connect a remote port",
-      "desc": "Mirror a remote service (ACCOUNT/NAME) onto a local listening port.",
+      "desc": "Connect a remote service (ACCOUNT/NAME) to a local port; hitting the local port then reaches the remote service.",
       "remotePlaceholder": "ACCOUNT/NAME",
       "localPortPlaceholder": "Local port",
-      "add": "Connect",
+      "confirm": "Connect",
+      "dialogTitle": "Connect a remote port",
       "empty": "No remote ports connected yet.",
       "columns": {
         "remote": "Remote service",
@@ -88,31 +88,29 @@
       "warnRemote": "Enter the remote service ACCOUNT/NAME",
       "warnPort": "Enter a valid local port (1-65535)",
       "warnDuplicate": "Local port {{port}} already exists",
-      "dialogTitle": "Connect a remote port",
-      "confirm": "Connect",
-      "added": "Added",
-      "removed": "Removed"
+      "added": "Connected",
+      "removed": "Disconnected"
     },
-    "p2p": {
-      "title": "P2P inbound rule",
-      "desc": "Which local ports remote peers may dial over P2P (service name = port number).",
+    "inbound": {
+      "title": "Local ports reachable remotely",
+      "desc": "Which local ports may be reached from outside (the peer uses the port number as the service name).",
       "all": "All ports",
-      "selected": "Selected ports",
+      "selected": "Selected only",
       "none": "None",
-      "allHint": "{{n}} listening local ports will be exposed over P2P.",
-      "selectedHint": "{{n}} ports selected.",
-      "noneHint": "All P2P inbound connections are refused.",
+      "allSummary": "All {{n}} listening ports",
+      "selectedSummary": "{{n}} selected",
+      "noneSummary": "No remote connections allowed",
+      "emptySelected": "Nothing selected — no remote connections allowed.",
+      "allHint": "All {{n}} listening local ports are reachable remotely.",
+      "noneHint": "Every remote connection is refused.",
       "noPorts": "No listening local ports.",
       "offlinePorts": "Selected but not listening: {{ports}}",
       "configure": "Configure",
-      "dialogTitle": "P2P inbound rule",
-      "save": "Save rule",
+      "dialogTitle": "Local ports reachable remotely",
+      "save": "Save",
       "selectAll": "Select all",
       "clear": "Clear",
-      "summaryAll": "All ports ({{n}} listening)",
-      "summarySelected": "Selected ports ({{n}})",
-      "summaryNone": "No P2P inbound at all",
-      "saved": "P2P rule updated"
+      "saved": "Remote-connection rule updated"
     }
   },
   "log": {
@@ -127,7 +125,7 @@
     "empty": "No requests yet — hit your tunnel URL to see requests here.",
     "emptyFiltered": "No requests match the filter.",
     "detail": "Request detail",
-    "detailHint": "Select a request on the left",
+    "detailHint": "Select a request from the list",
     "selectHint": "Click a request row to inspect its headers & body.",
     "payloadRequest": "Request",
     "payloadResponse": "Response",

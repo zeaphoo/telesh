@@ -13,12 +13,12 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { EmptyState } from '../components/empty-state'
-import { PageHeader } from '../components/page-header'
 import { StatusBadge } from '../components/status-badge'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -84,7 +84,13 @@ function StatusCell({ entry }) {
   )
 }
 
-/** 可勾选的端口行(发布对话框与 P2P 规则对话框共用)。 */
+/** 端口列表太长时截断,避免把界面撑破。 */
+function portListText(ports, max = 16) {
+  if (ports.length <= max) return ports.join(', ')
+  return `${ports.slice(0, max).join(', ')} … (+${ports.length - max})`
+}
+
+/** 可勾选的端口行(发布对话框与远程连接规则对话框共用)。 */
 function PortRow({ port, process, hint, selected, onSelect }) {
   return (
     <button
@@ -108,7 +114,7 @@ function PortRow({ port, process, hint, selected, onSelect }) {
   )
 }
 
-/** 端口与服务:对外发布 + 远程连接/P2P。所有操作即时生效。 */
+/** 端口与服务:对外发布 + 远程连接。所有操作即时生效。 */
 export default function PublishView() {
   const { t } = useTranslation()
   const { t: tc } = useTranslation('common')
@@ -135,7 +141,7 @@ export default function PublishView() {
   const [mirrorForm, setMirrorForm] = useState({ remote: '', local_port: '' })
   const [mirrorWarn, setMirrorWarn] = useState(null)
 
-  // P2P 规则对话框(草稿,点“保存规则”才提交)
+  // 远程连接规则对话框(草稿,点“保存”才提交)
   const [ruleOpen, setRuleOpen] = useState(false)
   const [ruleMode, setRuleMode] = useState('selected')
   const [rulePorts, setRulePorts] = useState([])
@@ -166,12 +172,6 @@ export default function PublishView() {
     [listening, usedPorts]
   )
   const listeningSet = useMemo(() => new Set(listening.map((p) => p.port)), [listening])
-
-  const hasAnything =
-    publicEntries.length > 0 ||
-    mirrors.length > 0 ||
-    policyMode !== 'selected' ||
-    policyPorts.length > 0
 
   const httpHint = (p) =>
     p.http_hint ? <StatusBadge state="live" label={t('publish.detectedHttp')} /> : null
@@ -245,7 +245,7 @@ export default function PublishView() {
     await apply(next, t('publish.mirrors.removed'))
   }
 
-  // ---- P2P 规则 ----
+  // ---- 远程连接规则 ----
   function openRule() {
     setRuleMode(policyMode)
     setRulePorts(policyPorts)
@@ -262,19 +262,30 @@ export default function PublishView() {
     const ok = await applyP2pPolicy({ mode: ruleMode, ports: rulePorts })
     const { publishError: err } = useAgent.getState()
     if (ok) {
-      toast.success(t('publish.p2p.saved'))
+      toast.success(t('publish.inbound.saved'))
       setRuleOpen(false)
     } else {
       toast.error(err || tc('error.api'))
     }
   }
 
-  const ruleSummary =
+  const modeSummary =
     policyMode === 'all'
-      ? t('publish.p2p.summaryAll', { n: listening.length })
+      ? t('publish.inbound.allSummary', { n: listening.length })
       : policyMode === 'none'
-        ? t('publish.p2p.summaryNone')
-        : t('publish.p2p.summarySelected', { n: policyPorts.length })
+        ? t('publish.inbound.noneSummary')
+        : t('publish.inbound.selectedSummary', { n: policyPorts.length })
+
+  // 直接把端口列出来(不只给个数字)。
+  const reachable = useMemo(
+    () =>
+      policyMode === 'all'
+        ? listening.map((p) => p.port)
+        : policyMode === 'selected'
+          ? policyPorts
+          : [],
+    [policyMode, listening, policyPorts]
+  )
 
   function targetOf(e) {
     if (e.kind === 'http') return e.sub_domain || t('publish.targetAuto')
@@ -286,31 +297,10 @@ export default function PublishView() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-4 px-4 py-6 sm:px-6">
-      <PageHeader
-        title={t('nav.publish')}
-        actions={
-          <Button onClick={openPublish} className="gap-1">
-            <Plus className="size-4" /> {t('publish.add')}
-          </Button>
-        }
-      />
-
-      {/* 概览:没配置任何东西时整行不显示 */}
-      {hasAnything && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline">
-            {t('publish.summary.published', { n: publicEntries.length })}
-          </Badge>
-          <Badge variant="outline">{t('publish.summary.mirrors', { n: mirrors.length })}</Badge>
-          <Badge variant="outline">
-            {t('publish.summary.p2p', { mode: t(`publish.p2p.${policyMode}`) })}
-          </Badge>
-          {publishError && (
-            <span className="text-xs text-destructive">
-              {t('publish.publishError', { error: publishError })}
-            </span>
-          )}
-        </div>
+      {publishError && (
+        <p className="text-xs text-destructive">
+          {t('publish.publishError', { error: publishError })}
+        </p>
       )}
 
       {/* 区块一:对外发布 */}
@@ -320,19 +310,20 @@ export default function PublishView() {
             <Globe className="size-4" /> {t('publish.publishTitle')}
           </CardTitle>
           <CardDescription>{t('publish.publishDesc')}</CardDescription>
+          <CardAction>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline">
+                {t('publish.summary.published', { n: publicEntries.length })}
+              </Badge>
+              <Button size="sm" onClick={openPublish} className="gap-1">
+                <Plus className="size-3.5" /> {t('publish.add')}
+              </Button>
+            </div>
+          </CardAction>
         </CardHeader>
         <CardContent className="p-0">
           {publicEntries.length === 0 ? (
-            <EmptyState
-              icon={Globe}
-              title={t('publish.none')}
-              description={t('publish.noneHint')}
-              action={
-                <Button variant="outline" size="sm" onClick={openPublish} className="gap-1">
-                  <Plus className="size-3.5" /> {t('publish.add')}
-                </Button>
-              }
-            />
+            <EmptyState icon={Globe} title={t('publish.none')} description={t('publish.noneHint')} />
           ) : (
             <Table>
               <TableHeader>
@@ -372,7 +363,7 @@ export default function PublishView() {
         </CardContent>
       </Card>
 
-      {/* 区块二:远程连接与 P2P(两个操作各走一个对话框) */}
+      {/* 区块二:远程连接(两个操作各走一个对话框) */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
@@ -388,9 +379,14 @@ export default function PublishView() {
                 <h3 className="text-sm font-medium">{t('publish.mirrors.title')}</h3>
                 <p className="text-xs text-muted-foreground">{t('publish.mirrors.desc')}</p>
               </div>
-              <Button variant="outline" size="sm" onClick={openMirror} className="shrink-0 gap-1">
-                <Plus className="size-3.5" /> {t('publish.mirrors.confirm')}
-              </Button>
+              <div className="flex shrink-0 items-center gap-2">
+                <Badge variant="outline">
+                  {t('publish.summary.mirrors', { n: mirrors.length })}
+                </Badge>
+                <Button variant="outline" size="sm" onClick={openMirror} className="gap-1">
+                  <Plus className="size-3.5" /> {t('publish.mirrors.confirm')}
+                </Button>
+              </div>
             </div>
             {mirrors.length === 0 ? (
               <p className="text-xs text-muted-foreground">{t('publish.mirrors.empty')}</p>
@@ -434,17 +430,28 @@ export default function PublishView() {
             )}
           </section>
 
-          {/* 2b. P2P 入站规则 */}
+          {/* 2b. 允许远程连接的本地端口 */}
           <section className="border-t pt-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
+              <div className="min-w-0">
                 <h3 className="flex items-center gap-2 text-sm font-medium">
-                  <Radio className="size-3.5" /> {t('publish.p2p.title')}
+                  <Radio className="size-3.5" /> {t('publish.inbound.title')}
                 </h3>
-                <p className="text-xs text-muted-foreground">{ruleSummary}</p>
+                <p className="text-xs text-muted-foreground">{modeSummary}</p>
+                {reachable.length > 0 ? (
+                  <p className="mt-1 font-mono text-xs break-all text-foreground">
+                    {portListText(reachable)}
+                  </p>
+                ) : (
+                  policyMode === 'selected' && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t('publish.inbound.emptySelected')}
+                    </p>
+                  )
+                )}
               </div>
               <Button variant="outline" size="sm" onClick={openRule} className="shrink-0 gap-1">
-                <Settings2 className="size-3.5" /> {t('publish.p2p.configure')}
+                <Settings2 className="size-3.5" /> {t('publish.inbound.configure')}
               </Button>
             </div>
           </section>
@@ -590,36 +597,36 @@ export default function PublishView() {
         </DialogContent>
       </Dialog>
 
-      {/* P2P 入站规则对话框 */}
+      {/* 允许远程连接的本地端口:规则对话框 */}
       <Dialog open={ruleOpen} onOpenChange={setRuleOpen}>
         <DialogContent className="sm:max-w-3xl">
           <DialogHeader>
-            <DialogTitle>{t('publish.p2p.dialogTitle')}</DialogTitle>
-            <DialogDescription>{t('publish.p2p.desc')}</DialogDescription>
+            <DialogTitle>{t('publish.inbound.dialogTitle')}</DialogTitle>
+            <DialogDescription>{t('publish.inbound.desc')}</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
             <Tabs value={ruleMode} onValueChange={setRuleMode}>
               <TabsList>
-                <TabsTrigger value="all">{t('publish.p2p.all')}</TabsTrigger>
-                <TabsTrigger value="selected">{t('publish.p2p.selected')}</TabsTrigger>
-                <TabsTrigger value="none">{t('publish.p2p.none')}</TabsTrigger>
+                <TabsTrigger value="all">{t('publish.inbound.all')}</TabsTrigger>
+                <TabsTrigger value="selected">{t('publish.inbound.selected')}</TabsTrigger>
+                <TabsTrigger value="none">{t('publish.inbound.none')}</TabsTrigger>
               </TabsList>
             </Tabs>
 
             {ruleMode === 'all' && (
               <p className="text-xs text-muted-foreground">
-                {t('publish.p2p.allHint', { n: listening.length })}
+                {t('publish.inbound.allHint', { n: listening.length })}
               </p>
             )}
             {ruleMode === 'none' && (
-              <p className="text-xs text-muted-foreground">{t('publish.p2p.noneHint')}</p>
+              <p className="text-xs text-muted-foreground">{t('publish.inbound.noneHint')}</p>
             )}
             {ruleMode === 'selected' && (
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-xs text-muted-foreground">
-                    {t('publish.p2p.selectedHint', { n: rulePorts.length })}
+                    {t('publish.inbound.selectedSummary', { n: rulePorts.length })}
                   </span>
                   <div className="flex items-center gap-1">
                     <Button
@@ -627,15 +634,15 @@ export default function PublishView() {
                       size="sm"
                       onClick={() => setRulePorts(listening.map((p) => p.port))}
                     >
-                      {t('publish.p2p.selectAll')}
+                      {t('publish.inbound.selectAll')}
                     </Button>
                     <Button variant="ghost" size="sm" onClick={() => setRulePorts([])}>
-                      {t('publish.p2p.clear')}
+                      {t('publish.inbound.clear')}
                     </Button>
                   </div>
                 </div>
                 {listening.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">{t('publish.p2p.noPorts')}</p>
+                  <p className="text-xs text-muted-foreground">{t('publish.inbound.noPorts')}</p>
                 ) : (
                   <div className="max-h-64 overflow-auto rounded-md border">
                     {listening.map((p) => (
@@ -652,7 +659,7 @@ export default function PublishView() {
                 )}
                 {rulePorts.some((p) => !listeningSet.has(p)) && (
                   <p className="text-xs text-muted-foreground">
-                    {t('publish.p2p.offlinePorts', {
+                    {t('publish.inbound.offlinePorts', {
                       ports: rulePorts.filter((p) => !listeningSet.has(p)).join(', '),
                     })}
                   </p>
@@ -667,7 +674,7 @@ export default function PublishView() {
             </Button>
             <Button onClick={submitRule} disabled={publishing} className="gap-1">
               {publishing && <Loader2 className="size-4 animate-spin" />}
-              {t('publish.p2p.save')}
+              {t('publish.inbound.save')}
             </Button>
           </DialogFooter>
         </DialogContent>
