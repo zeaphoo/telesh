@@ -71,10 +71,10 @@ export default function App() {
   // 导航栏右侧:所有会变化的数值都给定宽 + tabular-nums,整体 shrink-0,
   // 避免轮询刷新时布局左右抽动。
   const status = (
-    <span className="hidden shrink-0 items-center gap-3 xl:flex">
+    <span className="hidden min-w-0 items-center gap-3 xl:flex">
       <AccountIndicator account={account} />
       {tunnel && (
-        <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <span className="hidden shrink-0 items-center gap-1.5 text-xs text-muted-foreground 2xl:flex">
           <Badge variant={tunnel.mode === 'tcp' ? 'secondary' : 'default'}>
             {tunnel.mode}
           </Badge>
@@ -98,9 +98,13 @@ export default function App() {
 
   const actions = (
     <>
-      <Button variant="ghost" size="sm" onClick={() => refreshAll()} className="gap-1">
-        <RefreshCw className="size-3.5" />
-        <span className="hidden sm:inline">{tc('action.refresh')}</span>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={() => refreshAll()}
+        aria-label={tc('action.refresh')}
+      >
+        <RefreshCw />
       </Button>
       <LocaleSwitcher />
       <ThemeToggle />

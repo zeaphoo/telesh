@@ -433,8 +433,8 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
 
 后端 `crates/telesh/src/account.rs` 保存 `AccountInfo` 快照(`daemon` 重连前置 `connecting`、
 登录成功置 `online`、断线置 `offline`;控制服务器/数据目录/公钥启动时写入),新增
-`GET /api/account`。UI:navbar **只保留这一个状态圆点**(在线时显账户句柄,否则显状态文案),
-数值区(请求数/流量)定宽 + `tabular-nums`,`shrink-0`,避免轮询刷新时导航栏抖动;
+`GET /api/account`。UI:navbar **只保留这一个状态圆点**(在线时显 `账户句柄 – 显示名`,否则显状态文案),
+数值区(请求数/流量)定宽 + `tabular-nums`,避免轮询刷新时导航栏抖动;
 另有“账户”页列出登录状态、账户、显示名、控制服务器、身份公钥(可复制)、会话过期、
 最近登录、数据目录与最近错误。
 

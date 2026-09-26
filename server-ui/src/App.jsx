@@ -48,9 +48,13 @@ export default function App() {
 
   const actions = (
     <>
-      <Button variant="ghost" size="sm" onClick={() => fetchAll()} className="gap-1">
-        <RefreshCw className="size-3.5" />
-        <span className="hidden sm:inline">{tc('action.refresh')}</span>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={() => fetchAll()}
+        aria-label={tc('action.refresh')}
+      >
+        <RefreshCw />
       </Button>
       <LocaleSwitcher />
       <ThemeToggle />

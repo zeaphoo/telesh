@@ -6,8 +6,9 @@ import { cn } from '@/lib/utils'
 const TONE = { online: 'success', connecting: 'warning', offline: 'danger' }
 
 /**
- * navbar 上的账户/登录状态。**全应用只保留这一个状态圆点**;在线时显示账户句柄,
- * 否则显示状态文案。整体定宽、文案不逐秒刷新,避免导航栏左右抖动。
+ * navbar 上的账户/登录状态。**全应用只保留这一个状态圆点**;在线时显示
+ * `账户句柄 – 显示名`,否则显示状态文案。显示名可截断,数值不逐秒刷新,
+ * 避免导航栏左右抖动。
  */
 export function AccountIndicator({ account, className }) {
   const { t } = useTranslation()
@@ -16,17 +17,29 @@ export function AccountIndicator({ account, className }) {
   const online = state === 'online'
 
   return (
-    <span className={cn('inline-flex min-w-28 shrink-0 items-center gap-2', className)}>
+    <span className={cn('inline-flex min-w-0 items-center gap-2', className)}>
       <StatusDot tone={tone} pulse={state !== 'offline'} />
       {online ? (
-        <span
-          className="min-w-0 truncate font-mono text-sm font-medium"
-          title={account?.account || ''}
-        >
-          {account?.account}
-        </span>
+        <>
+          <span className="shrink-0 font-mono text-base font-medium tabular-nums">
+            {account?.account}
+          </span>
+          {account?.display_name && (
+            <>
+              <span aria-hidden="true" className="shrink-0 text-muted-foreground/50">
+                –
+              </span>
+              <span
+                className="min-w-0 max-w-40 truncate text-base text-muted-foreground"
+                title={account.display_name}
+              >
+                {account.display_name}
+              </span>
+            </>
+          )}
+        </>
       ) : (
-        <span className="text-sm text-muted-foreground">
+        <span className="shrink-0 text-base text-muted-foreground">
           {t(`account.state.${state}`, { defaultValue: state })}
         </span>
       )}
