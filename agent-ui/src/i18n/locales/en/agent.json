@@ -2,10 +2,37 @@
   "title": "telesh",
   "nav": {
     "publish": "Ports & publishing",
-    "log": "Request log"
+    "log": "Request log",
+    "account": "Account"
   },
   "header": {
     "requests": "{{n}} requests"
+  },
+  "account": {
+    "title": "Account",
+    "description": "This agent's identity and login status.",
+    "identity": "Identity",
+    "identityDesc": "Keypair login: the public key is the account key.",
+    "unavailable": "Cannot read account information.",
+    "never": "—",
+    "expired": "expired",
+    "remaining": "{{mins}} min left",
+    "state": {
+      "online": "Signed in",
+      "connecting": "Connecting",
+      "offline": "Offline"
+    },
+    "fields": {
+      "status": "Login status",
+      "account": "Account",
+      "displayName": "Display name",
+      "controlServer": "Control server",
+      "publicKey": "Public key",
+      "sessionExpires": "Session expires",
+      "lastLogin": "Last login",
+      "dataroot": "Data directory",
+      "lastError": "Last error"
+    }
   },
   "publish": {
     "title": "Published ports",

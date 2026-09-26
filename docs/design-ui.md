@@ -429,10 +429,17 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
   空内容用 `EmptyState`,不显示 `(empty)`。
 - Replay:按钮 loading + 结果 toast,内联结果面板保留。
 
-### 9.4 语言
+### 9.4 账户与登录状态
 
-**中文默认 + EN 切换**(§6.4),`LocaleSwitcher` 用 shadcn `dropdown-menu` 或 `select`。
-agent-ui 现在的中英混排彻底消除。
+后端 `crates/telesh/src/account.rs` 保存 `AccountInfo` 快照(`daemon` 重连前置 `connecting`、
+登录成功置 `online`、断线置 `offline`;控制服务器/数据目录/公钥启动时写入),新增
+`GET /api/account`。UI:navbar 紧凑指示器(圆点 + 账户句柄/状态)与“账户”页,后者列出
+登录状态、账户、显示名、控制服务器、身份公钥(可复制)、会话过期、最近登录、数据目录与
+最近错误。
+
+### 9.5 语言
+
+**中文默认 + EN 切换**(§6.4),`LocaleSwitcher` 用 `dropdown-menu`/`select`;中英混排已消除。
 
 ---
 
@@ -451,6 +458,7 @@ agent-ui 现在的中英混排彻底消除。
 
 | 项 | 说明 | 优先级 |
 |---|---|---|
+| ~~`GET /api/account`~~ ✅ | agent 的登录状态 + 账户信息(§9.4),已实现 | — |
 | 静态资源缓存头 | hash 资源 `Cache-Control: immutable`,index.html `no-cache` | P1 |
 | `/api/healthz` 复用 | 用作"已连接"指示(server 已有) | P1 |
 | 错误码化 | 后端返回稳定 `code` 而非可读句子,便于 i18n | P2 |
@@ -462,17 +470,10 @@ agent-ui 现在的中英混排彻底消除。
 
 ## 12. 分阶段落地
 
-> P0 + P1 + P2 已完成(2025-09)。
-> - **P0**:两个 app 均接入 shadcn 4.x(radix-nova / neutral / Geist)、next-themes
->   浅深色切换 + 防闪白、i18n 骨架(zh-CN/en,浏览器优先)。
-> - **P1**:统一外壳(顶部 navbar 导航,无侧边栏)、自定义组件
->   `StatusBadge`/`StatusDot`/`StatCard`/`EmptyState`/`CopyButton`/`LiveIndicator`/`PageHeader`,
->   页面文案全量抽取。
-> - **P2**:agent-ui 即时发布(无保存按钮)、发布对话框、主表只列已发布、暂停实时流、
->   `j/k/r//` 快捷键、骨架屏;server-ui 首屏骨架 + Overview 只留最近 5 条 + 「查看全部」。
-> - 验证:两个 app `pnpm build`;无头 Chromium 覆盖根/子路由 × zh/en × 浅/深色;
->   并用 CDP 脚本真实点击验证了脏状态全链路(初始 clean → 改动 dirty → 保存启用
->   → PUT → 回到 clean + “已保存”)。
+> **已完成**:P0(shadcn 4.x radix-nova/neutral/Geist、深浅色主题、i18n)、
+> P1(顶部 navbar 外壳、基础组件、文案全量抽取)、P2(agent-ui 即时发布 + 发布对话框 +
+> 键盘/暂停/骨架屏;server-ui 骨架屏 + Overview 精简)、P3 分项:agent-ui 账户/登录状态。
+> 验证:两个 app `pnpm build`;无头 Chromium 覆盖根/子路由 × zh/en × 浅/深色;CDP 脚本真实点击。
 
 | 阶段 | 内容 | 产出 |
 |---|---|---|

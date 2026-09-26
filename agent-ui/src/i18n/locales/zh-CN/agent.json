@@ -2,10 +2,37 @@
   "title": "telesh",
   "nav": {
     "publish": "端口与发布",
-    "log": "请求日志"
+    "log": "请求日志",
+    "account": "账户"
   },
   "header": {
     "requests": "{{n}} 个请求"
+  },
+  "account": {
+    "title": "账户",
+    "description": "本机 agent 的身份与登录状态。",
+    "identity": "身份",
+    "identityDesc": "密钥对登录:公钥即账户密钥。",
+    "unavailable": "无法读取账户信息。",
+    "never": "—",
+    "expired": "已过期",
+    "remaining": "剩余 {{mins}} 分钟",
+    "state": {
+      "online": "已登录",
+      "connecting": "连接中",
+      "offline": "未连接"
+    },
+    "fields": {
+      "status": "登录状态",
+      "account": "账户",
+      "displayName": "显示名",
+      "controlServer": "控制服务器",
+      "publicKey": "身份公钥",
+      "sessionExpires": "会话过期",
+      "lastLogin": "最近登录",
+      "dataroot": "数据目录",
+      "lastError": "最近错误"
+    }
   },
   "publish": {
     "title": "已发布的端口",

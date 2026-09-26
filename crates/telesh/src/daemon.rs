@@ -60,12 +60,19 @@ pub async fn run(creds: Credentials) -> Result<()> {
     let mut backoff = Duration::from_secs(1);
     loop {
         shared.mark_all_pending();
-        match session(&creds, shared).await {
+        crate::account::set_connecting();
+        let ended = match session(&creds, shared).await {
             Ok(()) => {
                 backoff = Duration::from_secs(1);
+                "control connection closed".to_string()
             }
-            Err(e) => warn!("agent session ended: {e:#}"),
-        }
+            Err(e) => {
+                let msg = format!("{e:#}");
+                warn!("agent session ended: {msg}");
+                msg
+            }
+        };
+        crate::account::set_offline(ended);
         shared.mark_all_pending();
         warn!(ms = backoff.as_millis(), "reconnecting to the control server");
         tokio::time::sleep(backoff).await;
@@ -88,6 +95,11 @@ async fn session(creds: &Credentials, shared: &Arc<Shared>) -> Result<()> {
     )
     .await?;
     info!(account = %login.account, name = %login.display_name, "logged in");
+    crate::account::set_online(
+        login.account.clone(),
+        login.display_name.clone(),
+        login.expires_at,
+    );
     if let Err(e) = crate::state::save_session(&creds.state_path, &login.session, login.expires_at) {
         warn!("cannot persist session: {e:#}");
     }

@@ -323,6 +323,7 @@ pub async fn serve_dashboard(addr: SocketAddr) -> anyhow::Result<()> {
         .route("/api/tunnels", get(api_tunnels))
         .route("/api/ports", get(api_ports))
         .route("/api/publish", get(api_publish).put(api_set_publish))
+        .route("/api/account", get(api_account))
         .route("/api/requests", get(api_requests))
         .route("/api/requests/{id}", get(api_request_detail))
         .route("/api/requests/{id}/replay", post(api_replay))
@@ -343,6 +344,11 @@ async fn api_ports() -> impl IntoResponse {
 /// 当前发布配置 + 每条运行状态。
 async fn api_publish() -> impl IntoResponse {
     axum::Json(crate::publish::shared().status())
+}
+
+/// 本机 agent 的登录状态与账户信息。
+async fn api_account() -> impl IntoResponse {
+    axum::Json(crate::account::snapshot())
 }
 
 /// 覆盖式提交期望状态(UI 的"保存并应用")。

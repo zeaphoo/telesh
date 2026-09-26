@@ -21,6 +21,7 @@ export const useAgent = create((set, get) => ({
   lastSync: null,
   tunnels: [],
   requests: [],
+  account: null,
   selected: null,
   replayOut: null,
   replaying: false,
@@ -45,6 +46,15 @@ export const useAgent = create((set, get) => ({
       set({ tunnels, requests, loading: false, error: null, lastSync: Date.now() })
     } catch (e) {
       set({ error: errText(e), loading: false })
+    }
+  },
+
+  /** 本机 agent 的登录状态与账户信息(失败时不影响其它数据)。 */
+  fetchAccount: async () => {
+    try {
+      set({ account: await api('/api/account') })
+    } catch {
+      set({ account: null })
     }
   },
 
@@ -78,7 +88,7 @@ export const useAgent = create((set, get) => ({
   },
 
   refreshAll: async () => {
-    await Promise.all([get().fetchAll(), get().fetchPublish()])
+    await Promise.all([get().fetchAll(), get().fetchPublish(), get().fetchAccount()])
   },
 
   /** 覆盖式提交期望状态(即时生效);返回是否成功。 */

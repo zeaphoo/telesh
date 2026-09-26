@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Activity, ArrowDownUp, Network, RefreshCw, Server, SquareTerminal } from 'lucide-react'
+import { Activity, ArrowDownUp, Network, RefreshCw, Server, SquareTerminal, UserRound } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { AccountIndicator } from './components/account-indicator'
 import { AppShell } from './components/app-shell'
 import { LiveIndicator } from './components/live-indicator'
 import { LocaleSwitcher } from './components/locale-switcher'
@@ -12,30 +13,44 @@ import { Card, CardContent } from './components/ui/card'
 import { Toaster } from './components/ui/sonner'
 import { formatBytes } from './lib/format'
 import { useAgent } from './store/useAgent'
+import AccountView from './views/AccountView'
 import PublishView from './views/PublishView'
 import RequestLogView from './views/RequestLogView'
 
 const NAV = [
   { id: 'publish', labelKey: 'nav.publish', icon: Network },
   { id: 'log', labelKey: 'nav.log', icon: Server },
+  { id: 'account', labelKey: 'nav.account', icon: UserRound },
 ]
 
 export default function App() {
   const { t } = useTranslation()
   const { t: tc } = useTranslation('common')
-  const { tunnels, requests, error, lastSync, fetchAll, fetchPublish, refreshAll } = useAgent()
+  const {
+    tunnels,
+    requests,
+    account,
+    error,
+    lastSync,
+    fetchAll,
+    fetchPublish,
+    fetchAccount,
+    refreshAll,
+  } = useAgent()
   const [tab, setTab] = useState('publish')
 
   // Poll every 2s while the page is open (requests + ports/publish status).
   useEffect(() => {
     fetchAll()
     fetchPublish()
+    fetchAccount()
     const timer = setInterval(() => {
       fetchAll()
       fetchPublish()
+      fetchAccount()
     }, 2000)
     return () => clearInterval(timer)
-  }, [fetchAll, fetchPublish])
+  }, [fetchAll, fetchPublish, fetchAccount])
 
   const tunnel = tunnels[0]
   const totals = useMemo(() => {
@@ -57,6 +72,7 @@ export default function App() {
 
   const status = (
     <span className="hidden items-center gap-3 xl:flex">
+      <AccountIndicator account={account} />
       {tunnel && (
         <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
           <Badge variant={tunnel.mode === 'tcp' ? 'secondary' : 'default'}>
@@ -114,6 +130,9 @@ export default function App() {
       </div>
       <div className={tab === 'publish' ? undefined : 'hidden'}>
         <PublishView />
+      </div>
+      <div className={tab === 'account' ? undefined : 'hidden'}>
+        <AccountView />
       </div>
 
       <footer className="mx-auto flex max-w-5xl items-center gap-2 px-4 pb-6 text-xs text-muted-foreground sm:px-6">

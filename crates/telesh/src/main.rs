@@ -10,6 +10,7 @@
 //!
 //! 发布与镜像在本地 UI(`http://127.0.0.1:16345`)上配置。
 
+mod account;
 mod auth;
 mod config;
 mod daemon;
@@ -81,6 +82,12 @@ async fn main() -> Result<()> {
             }
         });
     }
+
+    account::init(
+        control_addr.clone(),
+        dataroot.display().to_string(),
+        *iroh::SecretKey::from_bytes(&state.secret_key).public().as_bytes(),
+    );
 
     let creds = daemon::Credentials {
         control_addr: control_addr.clone(),
