@@ -14,12 +14,12 @@ const LABELS = { 'zh-CN': '中文', en: 'English' }
 
 /** Language switcher: 中文 / English, persisted in localStorage. */
 export function LocaleSwitcher() {
-  const { i18n } = useTranslation()
+  const { t, i18n } = useTranslation('common')
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-sm" aria-label="Language">
+        <Button variant="ghost" size="icon-sm" aria-label={t('action.language')}>
           <Languages />
         </Button>
       </DropdownMenuTrigger>

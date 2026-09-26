@@ -8,35 +8,36 @@
     "requests": "{{n}} 个请求"
   },
   "publish": {
-    "ports": {
-      "title": "本机端口",
-      "description": "{{n}} 个端口 · 选择发布方式并填写参数,然后点“保存并应用”",
-      "portsError": "无法读取 /api/ports: {{error}}",
-      "publishError": "发布接口错误: {{error}}",
-      "unavailable": "端口列表不可用。",
-      "empty": "未发现监听中的本机端口。",
-      "detectedHttp": "检测到 HTTP",
-      "suggestHttp": "建议 HTTP",
-      "kindNone": "不发布",
-      "columns": {
-        "port": "端口",
-        "process": "进程",
-        "pid": "PID",
-        "kind": "发布方式",
-        "param": "参数",
-        "status": "状态"
-      },
-      "filters": {
-        "all": "全部",
-        "listening": "已监听",
-        "http": "HTTP",
-        "published": "已发布"
-      },
+    "title": "已发布的端口",
+    "description": "发布与取消发布立即生效。",
+    "add": "发布端口",
+    "count": "{{n}} 个已发布",
+    "empty": "还没有发布任何端口。",
+    "publishError": "发布接口错误: {{error}}",
+    "targetAuto": "自动分配",
+    "detectedHttp": "检测到 HTTP",
+    "added": "已发布",
+    "removed": "已取消发布",
+    "unpublish": "取消发布",
+    "columns": {
+      "port": "端口",
+      "target": "目标",
+      "status": "状态",
+      "actions": "操作"
+    },
+    "dialog": {
+      "title": "发布端口",
+      "description": "选择一个本机监听端口,选择发布方式并填写参数,确认后立即生效。",
+      "ports": "本机端口",
+      "portsError": "无法读取端口列表: {{error}}",
+      "noPorts": "没有可发布的本机端口(已发布的已排除)。",
+      "mode": "发布方式",
+      "params": "参数",
+      "confirm": "发布",
       "placeholders": {
         "subDomain": "子域,留空随机",
         "remotePort": "公网端口,留空分配",
-        "name": "服务名",
-        "remote": "ACCOUNT/NAME"
+        "name": "服务名"
       }
     },
     "mirrors": {
@@ -45,7 +46,7 @@
       "remotePlaceholder": "ACCOUNT/NAME",
       "localPortPlaceholder": "本地端口",
       "add": "加入列表",
-      "empty": "尚未添加镜像。加入后点上方“保存并应用”生效。",
+      "empty": "尚未添加镜像。",
       "columns": {
         "remote": "远端服务",
         "localPort": "本地端口",
@@ -54,13 +55,8 @@
       "warnRemote": "请填写远端服务 ACCOUNT/NAME",
       "warnPort": "请填写有效的本地端口 (1-65535)",
       "warnDuplicate": "本地端口 {{port}} 已在镜像列表中",
-      "removeTitle": "移除镜像",
-      "removeConfirm": "确认移除镜像 {{remote}}?保存后生效。"
-    },
-    "footer": {
-      "pending": "待发布 {{n}} 项",
-      "autoRefresh": "状态每 2 秒自动刷新",
-      "unsaved": "有未保存更改"
+      "added": "已添加镜像",
+      "removed": "已移除镜像"
     }
   },
   "log": {

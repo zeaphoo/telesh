@@ -409,17 +409,16 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
 与 server-ui 同款外壳(导航在顶部 navbar,无侧边栏),导航两项(端口与发布 / 请求日志),
 品牌区为 `SquareTerminal` 图标 + “telesh”;连接状态与隧道信息放在 navbar 右侧。
 
-### 9.2 端口与发布
+### 9.2 端口与发布(即时生效,无保存按钮)
 
-现状是 6 列宽表 + 顶部保存按钮,窄屏溢出、按钮滚出视野。改为:
+所有操作**立即 PUT `/api/publish`**,没有“保存并应用”、dirty 状态与 `beforeunload`。
 
-- 发布方式用 shadcn `select`;参数按 kind 切换 `input`;状态用 `StatusBadge`。
-- 筛选:`全部 / 已监听 / 建议 HTTP / 已发布`(shadcn `tabs` 或 `select`)。
-- **底部粘性操作条**:`待发布 N 项 · 有未保存更改` + 撤销 + **保存并应用**(loading)
-  + 结果 `sonner` toast。
-- **dirty 状态**:`desired` 与服务器状态 diff,显示未保存圆点;`beforeunload` 拦截。
-- 远端镜像独立卡片:行内表单 + 校验(字段级错误)+ 列表 + 移除确认(`alert-dialog`)。
-- HTTP 探测:`检测到 HTTP · nginx/1.24` 用 `Badge` + 截断 `Tooltip`。
+- **主表只列已发布的端口**,列:端口 / 目标 / 状态 / 操作(无发布方式下拉列)。
+  目标取自配置(HTTP 子域 / TCP 公网端口 / P2P 服务名),留空显示“自动分配”。
+- 每行“取消发布”立即生效,`sonner` toast 反馈。
+- **发布走对话框**(页面右上“发布端口”):列出本机监听端口(按端口去重、**排除已发布**),
+  选中后选方式(HTTP / TCP / P2P)+ 参数;P2P 未填服务名时禁用确认;确认即 PUT 并关闭。
+- 远端镜像独立卡片,加入 / 移除均立即生效;探测到的 HTTP 在端口列表里用 `StatusBadge` 标记。
 
 ### 9.3 请求日志
 
@@ -469,9 +468,8 @@ agent-ui 现在的中英混排彻底消除。
 > - **P1**:统一外壳(顶部 navbar 导航,无侧边栏)、自定义组件
 >   `StatusBadge`/`StatusDot`/`StatCard`/`EmptyState`/`CopyButton`/`LiveIndicator`/`PageHeader`,
 >   页面文案全量抽取。
-> - **P2**:agent-ui 粘性保存条 + 脏状态检测(与服务端 desired 逐字段比对)+ `beforeunload`
->   拦截 + 端口筛选 tab + 镜像删除确认 + `j/k/r//` 快捷键 + 暂停实时流 + 骨架屏;
->   server-ui 首屏骨架 + Overview 只留最近 5 条 + 「查看全部」。
+> - **P2**:agent-ui 即时发布(无保存按钮)、发布对话框、主表只列已发布、暂停实时流、
+>   `j/k/r//` 快捷键、骨架屏;server-ui 首屏骨架 + Overview 只留最近 5 条 + 「查看全部」。
 > - 验证:两个 app `pnpm build`;无头 Chromium 覆盖根/子路由 × zh/en × 浅/深色;
 >   并用 CDP 脚本真实点击验证了脏状态全链路(初始 clean → 改动 dirty → 保存启用
 >   → PUT → 回到 clean + “已保存”)。

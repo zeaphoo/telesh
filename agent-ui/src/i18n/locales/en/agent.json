@@ -8,44 +8,45 @@
     "requests": "{{n}} requests"
   },
   "publish": {
-    "ports": {
-      "title": "Local ports",
-      "description": "{{n}} ports · pick a publish mode, fill in the parameters, then click “Save & apply”",
-      "portsError": "Cannot read /api/ports: {{error}}",
-      "publishError": "Publish API error: {{error}}",
-      "unavailable": "Port list unavailable.",
-      "empty": "No listening local ports found.",
-      "detectedHttp": "HTTP detected",
-      "suggestHttp": "HTTP suggested",
-      "kindNone": "Don't publish",
-      "columns": {
-        "port": "Port",
-        "process": "Process",
-        "pid": "PID",
-        "kind": "Mode",
-        "param": "Parameters",
-        "status": "Status"
-      },
-      "filters": {
-        "all": "All",
-        "listening": "Listening",
-        "http": "HTTP",
-        "published": "Published"
-      },
+    "title": "Published ports",
+    "description": "Publishing and unpublishing take effect immediately.",
+    "add": "Publish a port",
+    "count": "{{n}} published",
+    "empty": "No published ports yet.",
+    "publishError": "Publish API error: {{error}}",
+    "targetAuto": "Auto-assigned",
+    "detectedHttp": "HTTP detected",
+    "added": "Published",
+    "removed": "Unpublished",
+    "unpublish": "Unpublish",
+    "columns": {
+      "port": "Port",
+      "target": "Target",
+      "status": "Status",
+      "actions": "Actions"
+    },
+    "dialog": {
+      "title": "Publish a port",
+      "description": "Pick a local listening port, choose the publish mode and fill in the parameters. Takes effect immediately.",
+      "ports": "Local ports",
+      "portsError": "Cannot read the port list: {{error}}",
+      "noPorts": "No local ports available to publish (already-published ones are excluded).",
+      "mode": "Mode",
+      "params": "Parameters",
+      "confirm": "Publish",
       "placeholders": {
         "subDomain": "Subdomain, blank = random",
         "remotePort": "Public port, blank = assigned",
-        "name": "Service name",
-        "remote": "ACCOUNT/NAME"
+        "name": "Service name"
       }
     },
     "mirrors": {
       "title": "Mirror remote services",
-      "description": "Mirror a remote service onto a local port: enter ACCOUNT/NAME and the local listening port, then add it to the list. This connection authenticates with this agent's own identity, no extra key needed.",
+      "description": "Mirror a remote service onto a local port: enter ACCOUNT/NAME and the local listening port, then add it. This connection authenticates with this agent's own identity, no extra key needed.",
       "remotePlaceholder": "ACCOUNT/NAME",
       "localPortPlaceholder": "Local port",
       "add": "Add",
-      "empty": "No mirrors yet. Add one, then click “Save & apply” above.",
+      "empty": "No mirrors yet.",
       "columns": {
         "remote": "Remote service",
         "localPort": "Local port",
@@ -54,13 +55,8 @@
       "warnRemote": "Enter the remote service ACCOUNT/NAME",
       "warnPort": "Enter a valid local port (1-65535)",
       "warnDuplicate": "Local port {{port}} is already in the list",
-      "removeTitle": "Remove mirror",
-      "removeConfirm": "Remove mirror {{remote}}? Takes effect after saving."
-    },
-    "footer": {
-      "pending": "{{n}} pending",
-      "autoRefresh": "status refreshes every 2s",
-      "unsaved": "Unsaved changes"
+      "added": "Mirror added",
+      "removed": "Mirror removed"
     }
   },
   "log": {

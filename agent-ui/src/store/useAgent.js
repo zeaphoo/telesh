@@ -33,7 +33,6 @@ export const useAgent = create((set, get) => ({
   publishError: null,
   publishLoaded: false,
   publishing: false,
-  lastSavedAt: null,
 
   setFilters: (f) => set({ filters: { ...get().filters, ...f } }),
 
@@ -82,8 +81,8 @@ export const useAgent = create((set, get) => ({
     await Promise.all([get().fetchAll(), get().fetchPublish()])
   },
 
-  /** PUT the desired state; the response is the refreshed state array. */
-  savePublish: async (desired) => {
+  /** 覆盖式提交期望状态(即时生效);返回是否成功。 */
+  applyPublish: async (desired) => {
     set({ publishing: true, publishError: null })
     try {
       const res = await fetch('/api/publish', {
@@ -93,15 +92,13 @@ export const useAgent = create((set, get) => ({
       })
       if (!res.ok) throw new Error(`PUT /api/publish: HTTP ${res.status}`)
       const data = await res.json()
-      set({
-        publish: Array.isArray(data) ? data : [],
-        publishing: false,
-        lastSavedAt: Date.now(),
-      })
+      set({ publish: Array.isArray(data) ? data : [], publishing: false })
       // "After a successful PUT, refresh."
       await get().fetchPublish()
+      return true
     } catch (e) {
       set({ publishing: false, publishError: errText(e) })
+      return false
     }
   },
 
