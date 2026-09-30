@@ -137,9 +137,9 @@ export default function RequestLogView() {
   const showSkeleton = loading && source.length === 0
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 px-4 py-6 sm:px-6">
+    <div className="mx-auto max-w-5xl space-y-3 px-4 py-4 sm:px-5">
       {/* 上:请求列表 */}
-      <Card>
+      <Card size="sm">
         {/* 标题 / 计数 / 筛选器排成一横排(注意 CardHeader 默认是 grid,必须显式加 flex) */}
         <CardHeader className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-baseline gap-2">
@@ -243,7 +243,7 @@ export default function RequestLogView() {
       </Card>
 
       {/* 下:请求详情 */}
-      <Card>
+      <Card size="sm">
         <CardHeader>
           <CardTitle className="text-base">{t('log.detail')}</CardTitle>
           <CardDescription>

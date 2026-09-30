@@ -32,14 +32,14 @@ export default function Overview() {
   const firstLoad = loading && !metrics
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6">
+    <div className="mx-auto max-w-5xl space-y-3 px-4 py-4 sm:px-5">
       <PageHeader
         title={t('nav.overview')}
         description={t('overview.syncedAt', { time: synced })}
       />
 
       {error && (
-        <Card>
+        <Card size="sm">
           <CardContent className="text-sm text-muted-foreground">
             {tc('error.api')}: {error}
           </CardContent>
@@ -93,7 +93,7 @@ export default function Overview() {
           )}
       </div>
 
-      <Card>
+      <Card size="sm">
         <CardHeader>
           <CardTitle className="text-base">{t('overview.liveTunnels')}</CardTitle>
           <CardDescription>{t('overview.liveTunnelsDesc')}</CardDescription>

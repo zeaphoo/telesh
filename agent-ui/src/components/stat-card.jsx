@@ -11,7 +11,7 @@ const TONE_VALUE = {
 /** 指标卡:标签 + 图标 + 大数字 + 可选提示。数字用等宽数字防止跳动。 */
 export function StatCard({ icon: Icon, label, value, hint, tone, className }) {
   return (
-    <Card className={className}>
+    <Card size="sm" className={className}>
       <CardHeader>
         <CardTitle className="text-sm font-medium text-muted-foreground">{label}</CardTitle>
         {Icon && (

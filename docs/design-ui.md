@@ -47,6 +47,8 @@ server-ui 顶部只有 3 个文字链接(无图标/品牌/主题/同步状态),a
 3. **零硬编码文案**。所有可见字符串走 `t()`,含 `title`、`aria-label`、空状态、错误。
 4. **每个异步动作四态**:loading / empty / error / success。
 5. **状态有冗余表达**(颜色 + 圆点/图标 + 文案),**动效克制且可关**。
+6. **信息密度优先**。信息多,所以圆角与内边距都比 shadcn 默认更紧:`--radius: 0.375rem`(原 0.625rem)、
+   卡片用 `size="sm"`(`--card-spacing` 16px→12px)、表头 `h-9`、页面 `py-4 / sm:px-5`、header 48px。
 
 ---
 
@@ -137,8 +139,7 @@ CLI 4.x 实际带入的依赖(比旧版多):
 | `cn` | 新的 `cn()` 实现(`lib/utils.js` 只是 `export { cn } from "cn"`) |
 | `shadcn` | 提供 `shadcn/tailwind.css` 基础层 |
 | `next-themes` | **sonner 组件依赖它**(所以我们自己也用它做主题,见 §4.1) |
-| `@fontsource-variable/geist` | preset 字体,本地打包 |
-| `tw-animate-css` | Tailwind v4 动画(取代 `tailwindcss-animate`) |
+| `@fontsource-variable/geist` / `tw-animate-css` | preset 字体(本地打包)与 Tailwind v4 动画 |
 
 - 现有 `button/card/badge/table` 被 CLI **覆盖**为官方版本。
 - `lib/utils.js` 也被覆盖为纯 `cn`;业务格式化另放 `lib/format.js`(见 §7)。
@@ -483,8 +484,6 @@ Type(类型色 `Badge`)、Public entry(等宽 + copy)、In/Out(右对齐 + 迷�
 | ~~P2 页面重构~~ ✅ | §8 三页 + §9 两页 + 骨架屏 + 错误/空/成功四态 | 业务页焕新 |
 | **P3 体验** | live tail 时间轴/高亮、ECharts 流量曲线、移动端细节 | 手感 |
 | **P4 收尾** | reduced-motion、favicon/`theme-color`、缓存头、a11y 全量、代码分割(server-ui 单 chunk 已 >500KB) | 可交付 |
-
-每阶段结束:`pnpm -C <app> build`;dev 页 `/__kitchen-sink` 在 light/dark × zh/en 下目检。
 
 ---
 

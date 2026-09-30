@@ -30,10 +30,10 @@ export default function Tunnels() {
   const { tunnels, error, loading } = useDashboard()
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 px-4 py-6 sm:px-6">
+    <div className="mx-auto max-w-5xl space-y-3 px-4 py-4 sm:px-5">
       <PageHeader title={t('nav.tunnels')} description={t('tunnels.description')} />
 
-      <Card>
+      <Card size="sm">
         <CardHeader>
           <CardTitle className="text-base">{t('tunnels.title')}</CardTitle>
           <CardDescription>{t('tunnels.count', { n: tunnels.length })}</CardDescription>

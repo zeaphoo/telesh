@@ -37,7 +37,7 @@ export function AppShell({ brand, status, actions, nav, active, onNavigate, chil
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="sticky top-0 z-40 border-b bg-card">
-        <div className="flex h-14 items-center gap-3 px-4">
+        <div className="flex h-12 items-center gap-3 px-3">
           {brand}
           <NavList nav={nav} active={active} onSelect={onNavigate} />
           <div className="ml-auto flex min-w-0 items-center gap-2">

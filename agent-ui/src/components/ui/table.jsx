@@ -1,6 +1,8 @@
 import * as React from "react"
 import { cn } from "cn"
 
+// 本地微调:表头 h-9(shadcn 默认 h-10),信息密度优先。
+
 function Table({
   className,
   ...props
@@ -74,7 +76,7 @@ function TableHead({
     <th
       data-slot="table-head"
       className={cn(
-        "h-10 px-2 text-left align-middle font-medium whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0",
+        "h-9 px-2 text-left align-middle font-medium whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props} />

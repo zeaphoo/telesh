@@ -332,7 +332,7 @@ export default function PublishView() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 px-4 py-6 sm:px-6">
+    <div className="mx-auto max-w-5xl space-y-3 px-4 py-4 sm:px-5">
       {publishError && (
         <p className="text-xs text-destructive">
           {t('publish.publishError', { error: publishError })}
@@ -340,7 +340,7 @@ export default function PublishView() {
       )}
 
       {/* 区块一:对外发布 */}
-      <Card>
+      <Card size="sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Globe className="size-4" /> {t('publish.publishTitle')}
@@ -400,7 +400,7 @@ export default function PublishView() {
       </Card>
 
       {/* 区块二:远程连接(两个操作各走一个对话框) */}
-      <Card>
+      <Card size="sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <ArrowRightLeft className="size-4" /> {t('publish.remoteTitle')}

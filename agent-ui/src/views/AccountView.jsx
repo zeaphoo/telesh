@@ -53,15 +53,15 @@ export default function AccountView() {
   })()
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 px-4 py-6 sm:px-6">
+    <div className="mx-auto max-w-5xl space-y-3 px-4 py-4 sm:px-5">
       {!account ? (
-        <Card>
+        <Card size="sm">
           <CardContent className="text-sm text-muted-foreground">
             {t('account.unavailable')}
           </CardContent>
         </Card>
       ) : (
-        <Card>
+        <Card size="sm">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <ShieldCheck className="size-4" /> {t('account.identity')}

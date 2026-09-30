@@ -30,10 +30,10 @@ export default function Clients() {
   const { clients, error, loading } = useDashboard()
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 px-4 py-6 sm:px-6">
+    <div className="mx-auto max-w-5xl space-y-3 px-4 py-4 sm:px-5">
       <PageHeader title={t('nav.clients')} description={t('clients.description')} />
 
-      <Card>
+      <Card size="sm">
         <CardHeader>
           <CardTitle className="text-base">{t('clients.title')}</CardTitle>
           <CardDescription>{t('clients.count', { n: clients.length })}</CardDescription>
