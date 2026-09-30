@@ -167,20 +167,33 @@ export default function PublishView() {
     for (const p of ports) {
       const port = Number(p?.port)
       if (!Number.isFinite(port) || byPort.has(port)) continue
-      byPort.set(port, { port, process: p.process ?? null, http_hint: !!p.http_hint })
+      byPort.set(port, {
+        port,
+        process: p.process ?? null,
+        http_hint: !!p.http_hint,
+        ssh_hint: !!p.ssh_hint,
+      })
     }
     return [...byPort.values()].sort((a, b) => a.port - b.port)
   }, [ports])
 
-  const usedPorts = useMemo(() => new Set(publish.map((e) => Number(e.local_port))), [publish])
+  // 发布对话框只排除「已按当前方式发布」的端口:同一个本地端口允许同时发布为
+  // HTTP 和 TCP,也允许在 P2P/镜像之外再发布,所以只按 kind 去重。
+  const modePorts = useMemo(
+    () => new Set(publish.filter((e) => e.kind === mode).map((e) => Number(e.local_port))),
+    [publish, mode]
+  )
   const available = useMemo(
-    () => listening.filter((p) => !usedPorts.has(p.port)),
-    [listening, usedPorts]
+    () => listening.filter((p) => !modePorts.has(p.port)),
+    [listening, modePorts]
   )
   const listeningSet = useMemo(() => new Set(listening.map((p) => p.port)), [listening])
 
-  const httpHint = (p) =>
-    p.http_hint ? <StatusBadge state="live" label={t('publish.detectedHttp')} /> : null
+  const protocolHint = (p) => {
+    if (p.ssh_hint) return <StatusBadge state="live" label={t('publish.detectedSsh')} />
+    if (p.http_hint) return <StatusBadge state="live" label={t('publish.detectedHttp')} />
+    return null
+  }
 
   async function apply(next, okMsg) {
     const ok = await applyPublish(next)
@@ -198,6 +211,12 @@ export default function PublishView() {
     setPublishOpen(true)
   }
 
+  /** 选端口;SSH 不是 HTTP,默认切到 TCP。 */
+  function pickPublishPort(p) {
+    setSelPort(p.port)
+    if (p.ssh_hint) setMode('tcp')
+  }
+
   async function submitPublish() {
     if (selPort == null) return
     const entry = { kind: mode, local_port: selPort }
@@ -206,7 +225,10 @@ export default function PublishView() {
       const n = Number(remotePort)
       if (Number.isFinite(n)) entry.remote_port = n
     }
-    const next = [...toDesired(publish).filter((e) => e.local_port !== selPort), entry]
+    const next = [
+      ...toDesired(publish).filter((e) => !(e.kind === mode && e.local_port === selPort)),
+      entry,
+    ]
     if (await apply(next, t('publish.added'))) setPublishOpen(false)
   }
 
@@ -518,9 +540,9 @@ export default function PublishView() {
                       key={p.port}
                       port={p.port}
                       process={p.process}
-                      hint={httpHint(p)}
+                      hint={protocolHint(p)}
                       selected={selPort === p.port}
-                      onSelect={() => setSelPort(p.port)}
+                      onSelect={() => pickPublishPort(p)}
                     />
                   ))}
                 </div>
@@ -739,7 +761,7 @@ export default function PublishView() {
                         key={p.port}
                         port={p.port}
                         process={p.process}
-                        hint={httpHint(p)}
+                        hint={protocolHint(p)}
                         selected={rulePorts.includes(p.port)}
                         onSelect={() => toggleRulePort(p.port)}
                       />

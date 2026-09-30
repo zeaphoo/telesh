@@ -41,6 +41,7 @@
     "publishError": "接口错误: {{error}}",
     "targetAuto": "自动分配",
     "detectedHttp": "检测到 HTTP",
+    "detectedSsh": "检测到 SSH",
     "added": "已发布",
     "removed": "已取消发布",
     "unpublish": "取消发布",

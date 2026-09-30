@@ -41,6 +41,7 @@
     "publishError": "API error: {{error}}",
     "targetAuto": "Auto-assigned",
     "detectedHttp": "HTTP detected",
+    "detectedSsh": "SSH detected",
     "added": "Published",
     "removed": "Unpublished",
     "unpublish": "Unpublish",

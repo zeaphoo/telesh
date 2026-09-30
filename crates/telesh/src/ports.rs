@@ -25,6 +25,8 @@ pub struct PortInfo {
     pub process: Option<String>,
     /// 看起来是 HTTP 吗:探测结果;还没探测过时回落到端口表启发式。
     pub http_hint: bool,
+    /// 探测到是 SSH 吗(服务端先发 `SSH-2.0-...` banner)。
+    pub ssh_hint: bool,
     /// 探测到的 `Server:` 头(探测结果里没有就是 None)。
     pub server: Option<String>,
     /// 是否已经真的探测过(UI 用来区分"建议"和"检测到")。
@@ -37,6 +39,7 @@ pub struct PortInfo {
 #[derive(Debug, Clone, Default)]
 struct Probe {
     http: bool,
+    ssh: bool,
     server: Option<String>,
 }
 
@@ -75,6 +78,7 @@ pub fn scan() -> Vec<PortInfo> {
             pid,
             process: process.clone(),
             http_hint: HTTP_HINT_PORTS.contains(&port),
+            ssh_hint: false,
             server: None,
             probed: false,
             v6_only: v6,
@@ -109,7 +113,7 @@ pub async fn scan_and_probe() -> Vec<PortInfo> {
         .collect();
 
     let results: Vec<(u16, Probe)> = futures::stream::iter(todo)
-        .map(|(port, v6_only)| async move { (port, probe_http(port, v6_only).await) })
+        .map(|(port, v6_only)| async move { (port, probe_protocol(port, v6_only).await) })
         .buffer_unordered(PROBE_CONCURRENCY)
         .collect()
         .await;
@@ -120,6 +124,7 @@ pub async fn scan_and_probe() -> Vec<PortInfo> {
     for p in list.iter_mut() {
         if let Some(probe) = probes().get(&p.port) {
             p.http_hint = probe.http;
+            p.ssh_hint = probe.ssh;
             p.server = probe.server.clone();
             p.probed = true;
         }
@@ -127,8 +132,10 @@ pub async fn scan_and_probe() -> Vec<PortInfo> {
     list
 }
 
-/// 向本地端口发一个最小的 HTTP 请求,判断它是不是 HTTP。
-async fn probe_http(port: u16, v6_only: bool) -> Probe {
+/// 探一下本地端口是什么协议:SSH(服务端先发 banner)或 HTTP(发一个最小的
+/// `HEAD /`)。对 SSH 而言,我们在收到 banner 后读到的第一段字节就是
+/// `SSH-2.0-...`,所以这次发 HTTP 请求不影响判定。
+async fn probe_protocol(port: u16, v6_only: bool) -> Probe {
     let ip = if v6_only {
         IpAddr::from(Ipv6Addr::LOCALHOST)
     } else {
@@ -145,7 +152,18 @@ async fn probe_http(port: u16, v6_only: bool) -> Probe {
     let Ok(Ok(n)) = timeout(PROBE_TIMEOUT, sock.read(&mut buf)).await else {
         return Probe::default();
     };
-    let head = String::from_utf8_lossy(&buf[..n]);
+    classify(&buf[..n])
+}
+
+/// 按首段字节归类:`SSH-` → SSH,`HTTP/` → HTTP(顺带取 `Server:` 头)。
+fn classify(data: &[u8]) -> Probe {
+    let head = String::from_utf8_lossy(data);
+    if head.starts_with("SSH-") {
+        return Probe {
+            ssh: true,
+            ..Probe::default()
+        };
+    }
     if !head.starts_with("HTTP/") {
         return Probe::default();
     }
@@ -154,7 +172,11 @@ async fn probe_http(port: u16, v6_only: bool) -> Probe {
         .find(|l| l.to_ascii_lowercase().starts_with("server:"))
         .map(|l| l[l.find(':').map_or(0, |i| i + 1)..].trim().to_string())
         .filter(|s| !s.is_empty());
-    Probe { http: true, server }
+    Probe {
+        http: true,
+        server,
+        ..Probe::default()
+    }
 }
 
 /// `(address, port, inode)`,只取 LISTEN 状态。
