@@ -351,7 +351,7 @@ export default function PublishView() {
               <Badge variant="outline">
                 {t('publish.summary.published', { n: publicEntries.length })}
               </Badge>
-              <Button size="sm" onClick={openPublish} className="gap-1">
+              <Button variant="outline" size="sm" onClick={openPublish} className="gap-1">
                 <Plus className="size-3.5" /> {t('publish.add')}
               </Button>
             </div>
