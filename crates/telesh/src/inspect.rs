@@ -214,14 +214,21 @@ pub fn observe_request(stream_id: u64, data: &[u8]) {
         };
 
         if m.method.is_some() {
-            push_record(i, stream_id, m); // keep-alive: hand off the previous request
+            // Keep-alive: the previous request's bytes are everything before this
+            // new request line. Hand those off, then keep the tail (the new
+            // request) so its head/body aren't discarded with the previous one.
+            let tail = m.req_head.split_off(line_start);
+            m.req_seg = m.req_head.len() as u64;
+            push_record(i, stream_id, m);
+            m.req_head = tail;
+            m.scan = line_end + 1 - line_start;
         }
         m.method = Some(method);
         m.path = Some(path);
         m.seg_started = Instant::now();
-        // Re-credit the new request's bytes already buffered in req_head
-        // (they were counted into the previous segment above).
-        m.req_seg = m.req_head.len().saturating_sub(line_start) as u64;
+        // Bytes already buffered for this request (the first request starts at
+        // the stream head, later ones at their own request line).
+        m.req_seg = m.req_head.len() as u64;
         m.head_done = false;
         break;
     }
@@ -644,5 +651,43 @@ fn mime_for(path: &str) -> &'static str {
         "woff2" => "font/woff2",
         "json" => "application/json",
         _ => "application/octet-stream",
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// HTTP/1.1 keep-alive:检测到第二条请求行时,前一条要正确移交,且不能把
+    /// 后一条的请求头一起清掉(否则新记录 payload 为空、req_bytes=0)。
+    #[tokio::test]
+    async fn keepalive_hands_off_without_losing_the_next_request() {
+        let dir = std::env::temp_dir().join(format!("telesh-inspect-{}", rand::random::<u64>()));
+        init(dir.clone());
+
+        let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
+        start_stream(7, addr, Some(crate::publish::Section::Publish));
+
+        let first = b"GET /a HTTP/1.1\r\nHost: x\r\n\r\n";
+        let second = b"GET /b HTTP/1.1\r\nHost: x\r\n\r\n";
+        observe_request(7, first);
+        observe_request(7, second); // scanning detects the second request line
+        observe_response(7, b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        finish_stream(7);
+
+        let logs = inspector().logs.lock().unwrap();
+        let ring = logs.get("publish:3000").expect("channel");
+        assert_eq!(ring.len(), 2);
+        let (a, b) = (&ring[0], &ring[1]);
+
+        assert_eq!((a.method.as_str(), a.path.as_str()), ("GET", "/a"));
+        assert!(a.payload.starts_with("GET /a"));
+        assert!(!a.payload.contains("GET /b"), "previous must not swallow the next");
+        assert_eq!(a.req_bytes, first.len() as u64);
+
+        assert_eq!((b.method.as_str(), b.path.as_str()), ("GET", "/b"));
+        assert!(b.payload.starts_with("GET /b"), "new request head must be preserved");
+        assert_eq!(b.req_bytes, second.len() as u64);
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
