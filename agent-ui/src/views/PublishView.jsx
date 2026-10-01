@@ -366,7 +366,7 @@ export default function PublishView() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-3 px-4 py-4 sm:px-5">
+    <div className="mx-auto w-full max-w-5xl space-y-3 px-4 py-4 sm:px-5">
       {publishError && (
         <p className="text-xs text-destructive">
           {t('publish.publishError', { error: publishError })}

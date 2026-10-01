@@ -53,7 +53,7 @@ export default function AccountView() {
   })()
 
   return (
-    <div className="mx-auto max-w-5xl space-y-3 px-4 py-4 sm:px-5">
+    <div className="mx-auto w-full max-w-5xl space-y-3 px-4 py-4 sm:px-5">
       {!account ? (
         <Card size="sm">
           <CardContent className="text-sm text-muted-foreground">

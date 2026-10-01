@@ -6,7 +6,7 @@
     "account": "Account"
   },
   "header": {
-    "requests": "{{n}} requests"
+    "channels": "{{n}} channels"
   },
   "account": {
     "identity": "Identity",
@@ -126,7 +126,7 @@
     }
   },
   "log": {
-    "count": "{{shown}} / {{total}} shown · latest 100",
+    "count": "{{shown}} / {{total}} shown",
     "listTitle": "Requests",
     "allChannels": "All channels",
     "shortcuts": "j/k select · / filter",
@@ -142,6 +142,9 @@
     "selectHint": "Click a request row to inspect its headers & body.",
     "payloadRequest": "Request",
     "payloadResponse": "Response",
+    "startLine": "Start line",
+    "headers": "Headers",
+    "body": "Body",
     "emptyPayload": "(empty)",
     "columns": {
       "channel": "Channel",

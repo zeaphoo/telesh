@@ -1,16 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Activity, ArrowDownUp, Network, RefreshCw, Server, SquareTerminal, UserRound } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Activity, Network, RefreshCw, Server, SquareTerminal, UserRound } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { AccountIndicator } from './components/account-indicator'
 import { AppShell } from './components/app-shell'
 import { LocaleSwitcher } from './components/locale-switcher'
 import { ThemeToggle } from './components/theme-toggle'
-import { Badge } from './components/ui/badge'
 import { Button } from './components/ui/button'
 import { Card, CardContent } from './components/ui/card'
 import { Toaster } from './components/ui/sonner'
-import { formatBytes } from './lib/format'
 import { useAgent } from './store/useAgent'
 import AccountView from './views/AccountView'
 import PublishView from './views/PublishView'
@@ -26,8 +24,7 @@ export default function App() {
   const { t } = useTranslation()
   const { t: tc } = useTranslation('common')
   const {
-    tunnels,
-    requests,
+    publish,
     account,
     error,
     fetchAll,
@@ -59,16 +56,7 @@ export default function App() {
     return () => clearInterval(timer)
   }, [fetchAll, fetchPublish, fetchAccount, fetchP2pPolicy, fetchSettings, fetchChannels])
 
-  const tunnel = tunnels[0]
-  const totals = useMemo(() => {
-    let req = 0
-    let resp = 0
-    for (const r of requests) {
-      req += r.req_bytes
-      resp += r.resp_bytes
-    }
-    return { req, resp }
-  }, [requests])
+  const openChannels = publish.filter((e) => e?.state === 'live').length
 
   const brand = (
     <span className="flex shrink-0 items-center gap-2 text-sm font-semibold tracking-tight">
@@ -77,30 +65,13 @@ export default function App() {
     </span>
   )
 
-  // 导航栏右侧:所有会变化的数值都给定宽 + tabular-nums,整体 shrink-0,
-  // 避免轮询刷新时布局左右抽动。
+  // 导航栏右侧只保留登录状态与「开启的通道数」(隧道信息可能很多,不再逐个展示)。
   const status = (
     <span className="hidden min-w-0 items-center gap-3 xl:flex">
       <AccountIndicator account={account} />
-      {tunnel && (
-        <span className="hidden shrink-0 items-center gap-1.5 text-xs text-muted-foreground 2xl:flex">
-          <Badge variant={tunnel.mode === 'tcp' ? 'secondary' : 'default'}>
-            {tunnel.mode}
-          </Badge>
-          <span className="w-32 truncate text-right font-mono">{tunnel.remote}</span>
-          <span aria-hidden="true">→</span>
-          <span className="w-24 truncate font-mono">{tunnel.local}</span>
-        </span>
-      )}
-      <span className="flex w-28 shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums">
-        <Server className="size-3.5 shrink-0" />
-        <span className="truncate">{t('header.requests', { n: requests.length })}</span>
-      </span>
-      <span className="flex w-40 shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums">
-        <ArrowDownUp className="size-3.5 shrink-0" />
-        <span className="truncate">
-          ↑ {formatBytes(totals.req)} ↓ {formatBytes(totals.resp)}
-        </span>
+      <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums">
+        <Network className="size-3.5 shrink-0" />
+        <span className="truncate">{t('header.channels', { n: openChannels })}</span>
       </span>
     </span>
   )
@@ -150,7 +121,7 @@ export default function App() {
         <AccountView />
       </div>
 
-      <footer className="mx-auto flex max-w-5xl items-center gap-2 px-4 pb-6 text-xs text-muted-foreground sm:px-6">
+      <footer className="flex w-full items-center gap-2 px-4 pb-6 text-xs text-muted-foreground sm:px-5">
         <Activity className="size-3.5" />
         telesh agent · 127.0.0.1:16345
       </footer>

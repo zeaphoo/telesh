@@ -6,7 +6,7 @@
     "account": "账户"
   },
   "header": {
-    "requests": "{{n}} 个请求"
+    "channels": "{{n}} 个通道"
   },
   "account": {
     "identity": "身份",
@@ -126,7 +126,7 @@
     }
   },
   "log": {
-    "count": "{{shown}} / {{total}} 条 · 最近 100 条",
+    "count": "{{shown}} / {{total}} 条",
     "listTitle": "请求列表",
     "allChannels": "全部通道",
     "shortcuts": "j/k 选择 · / 过滤",
@@ -142,6 +142,9 @@
     "selectHint": "点击一行请求查看它的请求头与正文。",
     "payloadRequest": "请求",
     "payloadResponse": "响应",
+    "startLine": "起始行",
+    "headers": "Headers",
+    "body": "Body",
     "emptyPayload": "(空)",
     "columns": {
       "channel": "通道",
