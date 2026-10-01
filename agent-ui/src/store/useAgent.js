@@ -21,9 +21,13 @@ export const useAgent = create((set, get) => ({
   lastSync: null,
   tunnels: [],
   requests: [],
+  channels: [],
+  channel: '',
   account: null,
   selected: null,
   filters: { method: '', q: '' },
+
+  setChannel: (channel) => set({ channel }),
 
   // --- Ports & publishing -------------------------------------------------
   ports: [],
@@ -33,18 +37,30 @@ export const useAgent = create((set, get) => ({
   publishLoaded: false,
   publishing: false,
   p2pPolicy: null,
+  settings: { publish: {}, p2p: {} },
 
   setFilters: (f) => set({ filters: { ...get().filters, ...f } }),
 
   fetchAll: async () => {
     try {
+      const { channel } = get()
+      const q = channel ? `?channel=${encodeURIComponent(channel)}` : ''
       const [tunnels, requests] = await Promise.all([
         api('/api/tunnels'),
-        api('/api/requests'),
+        api(`/api/requests${q}`),
       ])
       set({ tunnels, requests, loading: false, error: null, lastSync: Date.now() })
     } catch (e) {
       set({ error: errText(e), loading: false })
+    }
+  },
+
+  /** 有日志的通道列表(用于筛选)。 */
+  fetchChannels: async () => {
+    try {
+      set({ channels: await api('/api/channels') })
+    } catch {
+      set({ channels: [] })
     }
   },
 
@@ -63,6 +79,32 @@ export const useAgent = create((set, get) => ({
       set({ p2pPolicy: await api('/api/p2p-policy') })
     } catch {
       set({ p2pPolicy: null })
+    }
+  },
+
+  /** 端口设置(publish / p2p 分开,默认全开)。 */
+  fetchSettings: async () => {
+    try {
+      set({ settings: await api('/api/settings') })
+    } catch {
+      set({ settings: { publish: {}, p2p: {} } })
+    }
+  },
+
+  /** 覆盖式提交端口设置(立即生效);返回是否成功。 */
+  applySettings: async (settings) => {
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings),
+      })
+      if (!res.ok) throw new Error(`PUT /api/settings: HTTP ${res.status}`)
+      set({ settings: await res.json() })
+      return true
+    } catch (e) {
+      set({ error: errText(e) })
+      return false
     }
   },
 
@@ -128,6 +170,8 @@ export const useAgent = create((set, get) => ({
       get().fetchPublish(),
       get().fetchAccount(),
       get().fetchP2pPolicy(),
+      get().fetchSettings(),
+      get().fetchChannels(),
     ])
   },
 

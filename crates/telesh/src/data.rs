@@ -113,8 +113,15 @@ async fn session(opts: &DataOptions) -> Result<()> {
                                 return;
                             }
                         };
+                        // 目标 key 是 `http:<port>` / `tcp:<port>`。只有 http 隧道
+                        // 够格被追踪;tcp 传 None。
+                        let section = target
+                            .starts_with("http:")
+                            .then_some(crate::publish::Section::Publish);
                         match targets.get(&target).map(|e| *e.value()) {
-                            Some(local) => crate::local::handle_stream(stream, local).await,
+                            Some(local) => {
+                                crate::local::handle_stream(stream, local, section).await
+                            }
                             None => debug!(%target, "unknown stream target"),
                         }
                     });

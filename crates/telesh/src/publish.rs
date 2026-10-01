@@ -1,5 +1,6 @@
 //! 发布配置(desired state)、运行状态,以及本地 UI 共享的状态。
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -101,6 +102,71 @@ pub struct P2pPolicy {
     pub ports: Vec<u16>,
 }
 
+/// 设置的作用域:对外发布,还是 P2P 允许远程连接。
+///
+/// 同一个本地端口可以两者都有,所以按 section 分开存,互不影响。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    Publish,
+    P2p,
+}
+
+impl Section {
+    /// 通道 key,与 `Settings` 里的 section 对应:`publish:<port>` / `p2p:<port>`。
+    pub fn channel(self, port: u16) -> String {
+        let name = match self {
+            Section::Publish => "publish",
+            Section::P2p => "p2p",
+        };
+        format!("{name}:{port}")
+    }
+}
+
+/// 一个本地端口的设置。以后会加更多字段(比如 publish 的固定子域名)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortSettings {
+    /// 是否开启请求追踪。默认开。
+    #[serde(default = "default_true")]
+    pub trace: bool,
+}
+
+impl Default for PortSettings {
+    fn default() -> Self {
+        Self { trace: true }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// 单文件的端口设置:publish 与 p2p 分开记「哪些端口开了追踪」。
+/// 没有记录的端口 = 默认开启。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Settings {
+    #[serde(default)]
+    pub publish: BTreeMap<u16, PortSettings>,
+    #[serde(default)]
+    pub p2p: BTreeMap<u16, PortSettings>,
+}
+
+impl Settings {
+    fn map(&self, section: Section) -> &BTreeMap<u16, PortSettings> {
+        match section {
+            Section::Publish => &self.publish,
+            Section::P2p => &self.p2p,
+        }
+    }
+
+    /// 这个端口是否开启追踪(没有记录 = 默认开)。
+    pub fn trace_enabled(&self, section: Section, port: u16) -> bool {
+        self.map(section)
+            .get(&port)
+            .map(|s| s.trace)
+            .unwrap_or(true)
+    }
+}
+
 /// 本地 UI 与 daemon 之间的共享状态。
 pub struct Shared {
     desired: Mutex<Vec<Entry>>,
@@ -113,6 +179,8 @@ pub struct Shared {
     /// 目标名 → 本地地址。数据面和 iroh 两条传输都用它选路:
     /// key 就是 dialer 写在流首的 service 字段。
     pub targets: Arc<DashMap<String, SocketAddr>>,
+    /// 端口设置(publish / p2p 分开),持久化到 `settings.json`。
+    settings: Mutex<Settings>,
 }
 
 impl Shared {
@@ -124,6 +192,57 @@ impl Shared {
             p2p: Mutex::new(P2pPolicy::default()),
             notify: Notify::new(),
             targets: Arc::new(DashMap::new()),
+            settings: Mutex::new(Settings::default()),
+        }
+    }
+
+    /// 当前设置(publish / p2p 分开)。
+    pub fn settings(&self) -> Settings {
+        self.settings.lock().unwrap().clone()
+    }
+
+    /// 覆盖式写入设置。
+    pub fn set_settings(&self, settings: Settings) {
+        *self.settings.lock().unwrap() = settings;
+    }
+
+    /// 这个 section 下的端口是否开启追踪(没记录 = 默认开)。
+    pub fn trace_enabled(&self, section: Section, port: u16) -> bool {
+        self.settings.lock().unwrap().trace_enabled(section, port)
+    }
+
+    /// 覆盖式写入设置并落盘(UI 提交)。
+    pub fn apply_settings(&self, settings: Settings) {
+        let mut guard = self.settings.lock().unwrap();
+        *guard = settings;
+        self.persist(&guard);
+    }
+
+    /// 把某个 section 的端口集合同步成 `ports`:新端口补默认值,消失的删掉,
+    /// 已有端口保留用户的选择。集合变了才落盘。daemon 每次 reconcile 调用。
+    pub fn sync_settings(&self, section: Section, ports: &[u16]) {
+        let mut guard = self.settings.lock().unwrap();
+        let desired: BTreeSet<u16> = ports.iter().copied().collect();
+        let map = match section {
+            Section::Publish => &mut guard.publish,
+            Section::P2p => &mut guard.p2p,
+        };
+        if map.keys().copied().collect::<BTreeSet<_>>() == desired {
+            return;
+        }
+        map.retain(|p, _| desired.contains(p));
+        for &p in &desired {
+            map.entry(p).or_default();
+        }
+        self.persist(&guard);
+    }
+
+    /// 把当前设置写回 `settings.json`(调用时已持有锁)。
+    fn persist(&self, settings: &Settings) {
+        if let Some(path) = state_path() {
+            if let Err(e) = save_settings(path, settings) {
+                tracing::warn!("cannot persist settings: {e:#}");
+            }
         }
     }
 
@@ -275,4 +394,75 @@ pub fn save_policy(state_path: &Path, policy: &P2pPolicy) -> Result<()> {
 /// P2P 规则与 state file 同目录。
 fn p2p_path(state_path: &Path) -> std::path::PathBuf {
     state_path.with_file_name("p2p.json")
+}
+
+/// 从 `settings.json` 读端口设置(文件不存在 = 全部默认)。
+pub fn load_settings(state_path: &Path) -> Settings {
+    let path = settings_path(state_path);
+    if !path.exists() {
+        return Settings::default();
+    }
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// 持久化端口设置。
+pub fn save_settings(state_path: &Path, settings: &Settings) -> Result<()> {
+    let path = settings_path(state_path);
+    let text = serde_json::to_string_pretty(settings)?;
+    std::fs::write(&path, text).with_context(|| format!("cannot write {}", path.display()))
+}
+
+/// 设置文件与 state file 同目录。
+fn settings_path(state_path: &Path) -> std::path::PathBuf {
+    state_path.with_file_name("settings.json")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 默认开;publish 与 p2p 的同一个端口互不影响;JSON 往返保持。
+    #[test]
+    fn settings_trace_is_per_section_and_port() {
+        let mut s = Settings::default();
+        assert!(s.trace_enabled(Section::Publish, 3000));
+        assert!(s.trace_enabled(Section::P2p, 3000));
+
+        s.publish.insert(3000, PortSettings { trace: false });
+        assert!(!s.trace_enabled(Section::Publish, 3000));
+        assert!(s.trace_enabled(Section::P2p, 3000)); // p2p 不受影响
+
+        let json = serde_json::to_string(&s).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert!(!back.trace_enabled(Section::Publish, 3000));
+        assert!(back.trace_enabled(Section::P2p, 3000));
+    }
+
+    /// daemon 同步会把当前隧道补进文件(默认开)、删掉消失的,且保留用户的选择。
+    #[test]
+    fn sync_materializes_the_current_tunnels() {
+        let shared = Shared::new();
+        shared.sync_settings(Section::Publish, &[3000, 8080]);
+        let s = shared.settings();
+        assert_eq!(s.publish.len(), 2);
+        assert!(s.trace_enabled(Section::Publish, 3000));
+
+        // 用户把 3000 关掉。
+        shared.sync_settings(Section::Publish, &[3000, 8080]);
+        let mut settings = shared.settings();
+        settings.publish.get_mut(&3000).unwrap().trace = false;
+        shared.apply_settings(settings);
+        assert!(!shared.trace_enabled(Section::Publish, 3000));
+
+        // 端口集变化:去掉 8080、加上 9090。3000 的选择要保留。
+        shared.sync_settings(Section::Publish, &[3000, 9090]);
+        let s = shared.settings();
+        assert_eq!(s.publish.len(), 2);
+        assert!(!s.trace_enabled(Section::Publish, 3000));
+        assert!(s.trace_enabled(Section::Publish, 9090));
+        assert!(!s.publish.contains_key(&8080));
+    }
 }

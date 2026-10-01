@@ -25,7 +25,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use futures::{SinkExt, StreamExt};
 use iroh::endpoint::{presets, Connection, RecvStream, SendStream};
 use iroh::{Endpoint, EndpointAddr, RelayMode, SecretKey};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -496,7 +496,9 @@ async fn serve_stream(
             }
         }
     }
-    let Some(local) = targets.get(name).map(|e| *e.value()) else {
+    // 目标表 key 是 `p2p:<name>`,与数据面/http/tcp 的 `http:` / `tcp:` 前缀区分开。
+    let target_key = format!("p2p:{name}");
+    let Some(local) = targets.get(&target_key).map(|e| *e.value()) else {
         warn!(%service, "p2p peer requested unknown service");
         let _ = send.write_all(&[STREAM_ACK_ERR]).await;
         let _ = send.finish();
@@ -514,7 +516,11 @@ async fn serve_stream(
     send.write_all(&[STREAM_ACK_OK])
         .await
         .context("send stream ack")?;
-    let (up, down) = pump(tcp, send, recv).await;
+    // 入站请求也喂给本地 inspector,和数据面同样的 HTTP 解析。
+    let stream_id = crate::inspect::next_stream_id();
+    crate::inspect::start_stream(stream_id, local, Some(crate::publish::Section::P2p));
+    let (up, down) = pump(tcp, send, recv, Some(stream_id)).await;
+    crate::inspect::finish_stream(stream_id);
     record_traffic(&service, up, down);
     Ok(())
 }
@@ -564,7 +570,7 @@ async fn attach(
                     let mut ack = [0u8; 1];
                     match recv.read_exact(&mut ack).await {
                         Ok(()) if ack[0] == STREAM_ACK_OK => {
-                            let _ = pump(sock, send, recv).await;
+                            let _ = pump(sock, send, recv, None).await;
                             return AttachOutcome::Attached;
                         }
                         Ok(()) => return AttachOutcome::Refused,
@@ -609,21 +615,77 @@ async fn wait_for_connection_until(
 
 /// Copy bytes in both directions until either side closes. Returns
 /// `(sent_to_peer, received_from_peer)` for metrics.
-async fn pump(tcp: TcpStream, mut send: SendStream, mut recv: RecvStream) -> (u64, u64) {
+///
+/// The copy is done by hand (instead of `tokio::io::copy`) so that, when
+/// `capture` is `Some`, every chunk also feeds the local inspector. That is the
+/// **serving** side only (inbound requests): peer -> local is the request
+/// direction, local -> peer is the response direction. The dialing side passes
+/// `None` and is not recorded.
+async fn pump(
+    tcp: TcpStream,
+    mut send: SendStream,
+    mut recv: RecvStream,
+    capture: Option<u64>,
+) -> (u64, u64) {
+    let stream_id = capture.unwrap_or(0);
     let (mut tcp_r, mut tcp_w) = tcp.into_split();
+
+    // 本地服务 -> 对端(响应方向)。
     let up = async {
-        let res = tokio::io::copy(&mut tcp_r, &mut send).await;
+        let mut buf = vec![0u8; 16 * 1024];
+        let mut total = 0u64;
+        loop {
+            match tcp_r.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if let Some(id) = capture {
+                        crate::inspect::observe_response(id, &buf[..n]);
+                    }
+                    if send.write_all(&buf[..n]).await.is_err() {
+                        break;
+                    }
+                    total += n as u64;
+                }
+                Err(e) => {
+                    debug!(stream_id, "p2p local read error: {e}");
+                    break;
+                }
+            }
+        }
         // Signal EOF (rather than resetting) once the local side is done.
         let _ = send.finish();
-        res
+        total
     };
+
+    // 对端 -> 本地服务(请求方向)。
     let down = async {
-        let res = tokio::io::copy(&mut recv, &mut tcp_w).await;
+        let mut buf = vec![0u8; 16 * 1024];
+        let mut total = 0u64;
+        loop {
+            // iroh 的 `read` 返回 `Option`,`None` 表示对端 FIN。
+            match recv.read(&mut buf).await {
+                Ok(Some(n)) if n > 0 => {
+                    if let Some(id) = capture {
+                        crate::inspect::observe_request(id, &buf[..n]);
+                    }
+                    if tcp_w.write_all(&buf[..n]).await.is_err() {
+                        break;
+                    }
+                    total += n as u64;
+                }
+                Ok(_) => break,
+                Err(e) => {
+                    debug!(stream_id, "p2p recv error: {e}");
+                    break;
+                }
+            }
+        }
         let _ = tcp_w.shutdown().await;
-        res
+        total
     };
+
     let (up, down) = tokio::join!(up, down);
-    (up.unwrap_or(0), down.unwrap_or(0))
+    (up, down)
 }
 
 /// 流前导的凭证类型。只有一种:服务端签发的访问令牌。

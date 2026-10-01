@@ -6,9 +6,9 @@
 //! default 127.0.0.1:16345). This never leaves the machine — useful for local
 //! debugging while the public tunnel stays opaque to the server.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
@@ -18,21 +18,21 @@ use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use dashmap::DashMap;
 use rust_embed::RustEmbed;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 
-/// Keep the most recent this-many requests in memory.
-pub const MAX_RECORDS: usize = 200;
 /// Beyond this many header bytes we stop parsing, just keep counting bytes.
 const MAX_HEAD: usize = 8 * 1024;
 /// Payload preview cap stored per request.
 const PAYLOAD_CAP: usize = 64 * 1024;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestRecord {
     pub id: u64,
+    /// 通道 key:`publish:<端口>` / `p2p:<端口>`。
+    pub channel: String,
     /// 这条流当时拨向的本地地址(replay 用)。
     pub local: Option<SocketAddr>,
-    pub tunnel: String,
     pub method: String,
     pub path: String,
     pub status: Option<u16>,
@@ -77,28 +77,50 @@ pub struct StreamCapture {
     head_done: bool,
 }
 
+/// Per-stream routing info kept while the stream is alive: where to dial for a
+/// replay, and whether this stream is being captured.
+#[derive(Debug, Clone)]
+struct StreamMeta {
+    local: SocketAddr,
+    /// Decided once at [`start_stream`] from the local port (HTTP? turned off?).
+    capture: bool,
+    /// `publish:<port>` / `p2p:<port>`;空串表示不抓包。
+    channel: String,
+}
+
 pub struct Inspector {
-    /// Capture only when an http tunnel is active.
-    enabled: AtomicBool,
-    /// Tunnel display name, e.g. `http:mysite`.
-    tunnel: Mutex<String>,
     streams: DashMap<u64, StreamCapture>,
-    /// 每条流拨向哪个本地地址(replay 用它)。
-    locals: DashMap<u64, SocketAddr>,
-    records: Mutex<VecDeque<RequestRecord>>,
+    /// 每条流的本地地址(replay 用)、通道与是否抓包。
+    meta: DashMap<u64, StreamMeta>,
+    /// 每个通道最近 `trace_log::PER_CHANNEL` 条记录(newest 在后)。
+    logs: Mutex<HashMap<String, VecDeque<RequestRecord>>>,
     next_id: AtomicU64,
+    /// 交给后台任务落盘(见 `trace_log::run`)。
+    tx: mpsc::UnboundedSender<(String, RequestRecord)>,
 }
 
 static INSPECTOR: OnceLock<Inspector> = OnceLock::new();
 
-pub fn init() {
+/// Initialize the inspector: load persisted logs and start the writer.
+///
+/// `log_dir` is `<dataroot>/traces`; created on first write.
+pub fn init(log_dir: std::path::PathBuf) {
+    let rings = crate::trace_log::load(&log_dir);
+    // Keep ids monotonic across restarts so newest-first ordering still works.
+    let max_id = rings
+        .values()
+        .flat_map(|r| r.iter())
+        .map(|r| r.id)
+        .max()
+        .unwrap_or(0);
+    let (tx, rx) = mpsc::unbounded_channel();
+    tokio::spawn(crate::trace_log::run(log_dir, rx));
     let _ = INSPECTOR.set(Inspector {
-        enabled: AtomicBool::new(false),
-        tunnel: Mutex::new(String::new()),
         streams: DashMap::new(),
-        locals: DashMap::new(),
-        records: Mutex::new(VecDeque::new()),
-        next_id: AtomicU64::new(1),
+        meta: DashMap::new(),
+        logs: Mutex::new(rings),
+        next_id: AtomicU64::new(max_id + 1),
+        tx,
     });
 }
 
@@ -106,15 +128,63 @@ fn inspector() -> &'static Inspector {
     INSPECTOR.get().expect("inspector not initialized")
 }
 
+/// 只有 HTTP 才够格被追踪。publish 的流已由调用方限定为 `http:` 隧道;P2P 流
+/// 还要看本地端口的探测结果是不是 HTTP。
+fn is_http_port(port: u16) -> bool {
+    crate::publish::shared()
+        .ports()
+        .iter()
+        .any(|p| p.port == port && p.http_hint)
+}
+
+/// 这条流要不要抓:按 (section, 端口) 查 settings,默认开。
+fn should_capture(section: crate::publish::Section, port: u16) -> bool {
+    let shared = crate::publish::shared();
+    match section {
+        crate::publish::Section::Publish => shared.trace_enabled(section, port),
+        crate::publish::Section::P2p => is_http_port(port) && shared.trace_enabled(section, port),
+    }
+}
+
+/// Is the stream's own capture flag set? Decided in [`start_stream`].
+fn capturing(i: &Inspector, stream_id: u64) -> bool {
+    i.meta.get(&stream_id).map(|m| m.capture).unwrap_or(false)
+}
+
+/// Allocate a process-wide stream id for the inspector.
+///
+/// yamux and iroh do not expose a reusable `u64`, and both transports feed the
+/// same per-stream maps, so ids must come from one shared counter.
+pub fn next_stream_id() -> u64 {
+    static NEXT_STREAM_ID: AtomicU64 = AtomicU64::new(1);
+    NEXT_STREAM_ID.fetch_add(1, Ordering::Relaxed)
+}
+
 /// Bytes flowing server -> local (the request direction).
-/// 记下这条流拨向哪个本地地址(replay 需要)。
-pub fn start_stream(stream_id: u64, local: SocketAddr) {
-    inspector().locals.insert(stream_id, local);
+/// 记下这条流的本地地址(replay 需要),并按 `(section, 端口)` 决定是否抓包。
+/// `section` 为 `None` 表示不够格(比如 TCP 隧道),不抓。
+pub fn start_stream(
+    stream_id: u64,
+    local: SocketAddr,
+    section: Option<crate::publish::Section>,
+) {
+    let (channel, capture) = match section {
+        Some(s) => (s.channel(local.port()), should_capture(s, local.port())),
+        None => (String::new(), false),
+    };
+    inspector().meta.insert(
+        stream_id,
+        StreamMeta {
+            local,
+            capture,
+            channel,
+        },
+    );
 }
 
 pub fn observe_request(stream_id: u64, data: &[u8]) {
     let i = inspector();
-    if !i.enabled.load(Ordering::Relaxed) {
+    if !capturing(i, stream_id) {
         return;
     }
     let mut c = i
@@ -165,7 +235,7 @@ pub fn observe_request(stream_id: u64, data: &[u8]) {
 /// Bytes flowing local -> server (the response direction).
 pub fn observe_response(stream_id: u64, data: &[u8]) {
     let i = inspector();
-    if !i.enabled.load(Ordering::Relaxed) {
+    if !capturing(i, stream_id) {
         return;
     }
     let mut c = i
@@ -187,16 +257,14 @@ pub fn observe_response(stream_id: u64, data: &[u8]) {
 /// stream closes.
 pub fn finish_stream(stream_id: u64) {
     let i = inspector();
-    i.locals.remove(&stream_id);
-    if !i.enabled.load(Ordering::Relaxed) {
-        return;
+    // `streams` 只为抓包的流建立,所以这里不必再判 capture。
+    // push_record 要读 per-stream 的 local,所以 meta 最后再删。
+    if let Some((_, mut c)) = i.streams.remove(&stream_id) {
+        if c.method.is_some() {
+            push_record(i, stream_id, &mut c);
+        }
     }
-    let Some((_, mut c)) = i.streams.remove(&stream_id) else {
-        return;
-    };
-    if c.method.is_some() {
-        push_record(i, stream_id, &mut c);
-    }
+    i.meta.remove(&stream_id);
 }
 
 impl StreamCapture {
@@ -227,10 +295,14 @@ fn push_record(i: &Inspector, stream_id: u64, c: &mut StreamCapture) {
     let path = c.path.take().unwrap_or_default();
     let status = c.status.take();
     let id = i.next_id.fetch_add(1, Ordering::Relaxed);
+    let (local, channel) = match i.meta.get(&stream_id) {
+        Some(meta) => (Some(meta.local), meta.channel.clone()),
+        None => (None, String::new()),
+    };
     let record = RequestRecord {
         id,
-        local: i.locals.get(&stream_id).map(|e| *e.value()),
-        tunnel: i.tunnel.lock().unwrap().clone(),
+        channel: channel.clone(),
+        local,
         duration_ms: c.seg_started.elapsed().as_millis() as u64,
         method,
         path,
@@ -241,11 +313,16 @@ fn push_record(i: &Inspector, stream_id: u64, c: &mut StreamCapture) {
         payload: preview(&c.req_head),
         resp_payload: preview(&c.resp_head),
     };
-    let mut recs = i.records.lock().unwrap();
-    if recs.len() >= MAX_RECORDS {
-        recs.pop_front();
+    // In-memory ring (newest per channel) + hand it to the file writer.
+    {
+        let mut logs = i.logs.lock().unwrap();
+        let ring = logs.entry(channel.clone()).or_default();
+        ring.push_back(record.clone());
+        while ring.len() > crate::trace_log::PER_CHANNEL {
+            ring.pop_front();
+        }
     }
-    recs.push_back(record);
+    let _ = i.tx.send((channel, record));
 
     // reset segment state for the next request on this stream
     c.req_head.clear();
@@ -326,6 +403,8 @@ pub async fn serve_dashboard(addr: SocketAddr) -> anyhow::Result<()> {
         .route("/api/account", get(api_account))
         .route("/api/p2p-policy", get(api_p2p_policy).put(api_set_p2p_policy))
         .route("/api/p2p/services", get(api_p2p_services))
+        .route("/api/settings", get(api_settings).put(api_set_settings))
+        .route("/api/channels", get(api_channels))
         .route("/api/requests", get(api_requests))
         .route("/api/requests/{id}", get(api_request_detail))
         .route("/api/requests/{id}/replay", post(api_replay))
@@ -356,6 +435,19 @@ async fn api_account() -> impl IntoResponse {
 /// 当前 P2P 入站规则。
 async fn api_p2p_policy() -> impl IntoResponse {
     axum::Json(crate::publish::shared().p2p_policy())
+}
+
+/// 端口设置(publish / p2p 分开)。
+async fn api_settings() -> impl IntoResponse {
+    axum::Json(crate::publish::shared().settings())
+}
+
+/// 覆盖式提交端口设置(立即生效并落盘)。
+async fn api_set_settings(
+    axum::Json(settings): axum::Json<crate::publish::Settings>,
+) -> impl IntoResponse {
+    crate::publish::shared().apply_settings(settings.clone());
+    axum::Json(settings)
 }
 
 /// 某个账户当前提供的服务名(「连接远程端口」的选择列表)。
@@ -424,19 +516,63 @@ async fn api_tunnels() -> impl IntoResponse {
     axum::Json(rows)
 }
 
-async fn api_requests() -> impl IntoResponse {
-    let recs = inspector().records.lock().unwrap();
-    let mut out: Vec<RequestRecord> = recs.iter().rev().cloned().collect();
-    out.truncate(100);
+#[derive(Deserialize)]
+struct RequestsQuery {
+    /// `publish:<port>` / `p2p:<port>`;不传 = 所有通道合并。
+    #[serde(default)]
+    channel: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+/// 通道列表(名字 + 当前条数),给 UI 做筛选。
+#[derive(Serialize)]
+struct ChannelInfo {
+    channel: String,
+    count: usize,
+}
+
+async fn api_channels() -> impl IntoResponse {
+    let logs = inspector().logs.lock().unwrap();
+    let mut out: Vec<ChannelInfo> = logs
+        .iter()
+        .map(|(channel, ring)| ChannelInfo {
+            channel: channel.clone(),
+            count: ring.len(),
+        })
+        .collect();
+    out.sort_by(|a, b| a.channel.cmp(&b.channel));
+    axum::Json(out)
+}
+
+async fn api_requests(
+    axum::extract::Query(q): axum::extract::Query<RequestsQuery>,
+) -> impl IntoResponse {
+    let logs = inspector().logs.lock().unwrap();
+    let mut out: Vec<RequestRecord> = match q.channel.as_deref() {
+        Some(channel) => logs
+            .get(channel)
+            .map(|ring| ring.iter().rev().cloned().collect())
+            .unwrap_or_default(),
+        None => {
+            let mut all: Vec<RequestRecord> =
+                logs.values().flat_map(|ring| ring.iter().cloned()).collect();
+            all.sort_by_key(|r| std::cmp::Reverse(r.id));
+            all
+        }
+    };
+    out.truncate(q.limit.unwrap_or(100));
     axum::Json(out)
 }
 
 async fn api_request_detail(UrlPath(id): UrlPath<u64>) -> impl IntoResponse {
-    let recs = inspector().records.lock().unwrap();
-    match recs.iter().find(|r| r.id == id) {
-        Some(r) => axum::Json(r.clone()).into_response(),
-        None => (StatusCode::NOT_FOUND, "request not found").into_response(),
+    let logs = inspector().logs.lock().unwrap();
+    for ring in logs.values() {
+        if let Some(r) = ring.iter().find(|r| r.id == id) {
+            return axum::Json(r.clone()).into_response();
+        }
     }
+    (StatusCode::NOT_FOUND, "request not found").into_response()
 }
 
 /// Replay: re-send the recorded request bytes straight to the local service
@@ -444,8 +580,9 @@ async fn api_request_detail(UrlPath(id): UrlPath<u64>) -> impl IntoResponse {
 /// tunnel.)
 async fn api_replay(UrlPath(id): UrlPath<u64>) -> impl IntoResponse {
     let found = {
-        let recs = inspector().records.lock().unwrap();
-        recs.iter()
+        let logs = inspector().logs.lock().unwrap();
+        logs.values()
+            .flat_map(|ring| ring.iter())
             .find(|r| r.id == id)
             .map(|r| (r.local, r.payload.clone()))
     };

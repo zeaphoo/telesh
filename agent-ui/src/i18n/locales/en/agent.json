@@ -45,10 +45,14 @@
     "added": "Published",
     "removed": "Unpublished",
     "unpublish": "Unpublish",
+    "trace": "Enable request tracing",
+    "traceToggle": "Trace",
+    "notHttp": "Not HTTP · not traced",
     "columns": {
       "port": "Port",
       "target": "Target",
       "status": "Status",
+      "trace": "Trace",
       "actions": "Actions"
     },
     "summary": {
@@ -124,6 +128,7 @@
   "log": {
     "count": "{{shown}} / {{total}} shown · latest 100",
     "listTitle": "Requests",
+    "allChannels": "All channels",
     "shortcuts": "j/k select · / filter",
     "paused": "Paused",
     "live": "Live",
@@ -139,6 +144,7 @@
     "payloadResponse": "Response",
     "emptyPayload": "(empty)",
     "columns": {
+      "channel": "Channel",
       "time": "Time",
       "method": "Method",
       "path": "Path",

@@ -45,10 +45,14 @@
     "added": "已发布",
     "removed": "已取消发布",
     "unpublish": "取消发布",
+    "trace": "开启请求追踪",
+    "traceToggle": "追踪",
+    "notHttp": "非 HTTP · 不追踪",
     "columns": {
       "port": "端口",
       "target": "目标",
       "status": "状态",
+      "trace": "追踪",
       "actions": "操作"
     },
     "summary": {
@@ -124,6 +128,7 @@
   "log": {
     "count": "{{shown}} / {{total}} 条 · 最近 100 条",
     "listTitle": "请求列表",
+    "allChannels": "全部通道",
     "shortcuts": "j/k 选择 · / 过滤",
     "paused": "已暂停",
     "live": "实时",
@@ -139,6 +144,7 @@
     "payloadResponse": "响应",
     "emptyPayload": "(空)",
     "columns": {
+      "channel": "通道",
       "time": "时间",
       "method": "方法",
       "path": "路径",

@@ -36,7 +36,7 @@ struct Applied {
     id: Option<u64>,
     /// 服务端分配的标识(subdomain / 公网端口 / 服务名),用于取消。
     key: Option<String>,
-    /// 目标表的 key(`<port>` 或 `<account>/<name>`)。
+    /// 目标表的 key(`http:<port>` / `tcp:<port>` / `p2p:<name>`)。
     target_key: String,
     state: State,
     detail: Option<String>,
@@ -64,6 +64,14 @@ pub async fn run(creds: Credentials) -> Result<()> {
         }
         Err(e) => warn!("cannot load the P2P policy: {e:#}"),
     }
+    // 端口设置(publish / p2p 分开,默认全开)。
+    let settings = publish::load_settings(&creds.state_path);
+    info!(
+        publish = settings.publish.len(),
+        p2p = settings.p2p.len(),
+        "loaded the port settings"
+    );
+    shared.set_settings(settings);
 
     let mut backoff = Duration::from_secs(1);
     loop {
@@ -406,7 +414,9 @@ async fn reconcile(
                 local_port,
                 sub_domain,
             } => {
-                let target_key = local_port.to_string();
+                // 目标 key 带上 kind:同一个本地端口可以同时是 http / tcp / p2p,
+                // 三者必须能分开(选路与追踪都按 key)。服务端只存不解释这个串。
+                let target_key = format!("http:{local_port}");
                 let id = *next_id;
                 *next_id += 1;
                 let _ = tx.send(Frame::TunnelPublish(TunnelPublish {
@@ -430,7 +440,7 @@ async fn reconcile(
                 local_port,
                 remote_port,
             } => {
-                let target_key = local_port.to_string();
+                let target_key = format!("tcp:{local_port}");
                 let id = *next_id;
                 *next_id += 1;
                 let _ = tx.send(Frame::TunnelPublish(TunnelPublish {
@@ -452,8 +462,8 @@ async fn reconcile(
             }
             Entry::P2p { local_port, name } => {
                 // iroh 前导里的 service 是 `<account>/<name>`,但 agent 选目标用的是
-                // 裸服务名(账号只用于归属校验),所以目标表的 key 就是 name。
-                let target_key = name.clone();
+                // 裸服务名(账号只用于归属校验);目标表 key 再带上 `p2p:` 前缀。
+                let target_key = format!("p2p:{name}");
                 let Some(ep) = endpoint else {
                     applied.push(Applied {
                         entry: entry.clone(),
@@ -553,6 +563,32 @@ async fn reconcile(
     for (key, addr) in wanted {
         shared.targets.insert(key, addr);
     }
+
+    // ---- 把 settings 同步成当前隧道集合 ----
+    // 文件里 publish / p2p 各自列出「哪些端口有追踪设置」:新端口补默认(开),
+    // 消失的删掉,已有端口保留用户的选择。这样文件跟着发布状态自动增减。
+    let http_ports: std::collections::HashSet<u16> = shared
+        .ports()
+        .iter()
+        .filter(|p| p.http_hint)
+        .map(|p| p.port)
+        .collect();
+    let publish_ports: Vec<u16> = applied
+        .iter()
+        .filter_map(|a| match &a.entry {
+            Entry::Http { local_port, .. } => Some(*local_port),
+            _ => None,
+        })
+        .collect();
+    let p2p_ports: Vec<u16> = applied
+        .iter()
+        .filter_map(|a| match &a.entry {
+            Entry::P2p { local_port, .. } if http_ports.contains(local_port) => Some(*local_port),
+            _ => None,
+        })
+        .collect();
+    shared.sync_settings(publish::Section::Publish, &publish_ports);
+    shared.sync_settings(publish::Section::P2p, &p2p_ports);
 }
 
 /// 把当前状态发布给 UI。

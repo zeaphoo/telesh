@@ -52,8 +52,9 @@ function statusTone(code) {
 function LogSkeleton() {
   return (
     <TableBody>
-      {Array.from({ length: 5 }).map((_, i) => (
+      {Array.from({ length: 6 }).map((_, i) => (
         <TableRow key={i}>
+          <TableCell><Skeleton className="h-4 w-20" /></TableCell>
           <TableCell><Skeleton className="h-4 w-16" /></TableCell>
           <TableCell><Skeleton className="h-4 w-12" /></TableCell>
           <TableCell><Skeleton className="h-4 w-32" /></TableCell>
@@ -69,7 +70,18 @@ function LogSkeleton() {
 export default function RequestLogView() {
   const { t } = useTranslation()
   const { t: tc } = useTranslation('common')
-  const { requests, loading, selected, filters, setFilters, select } = useAgent()
+  const {
+    requests,
+    loading,
+    selected,
+    filters,
+    setFilters,
+    select,
+    channels,
+    channel,
+    setChannel,
+    fetchAll,
+  } = useAgent()
 
   const [paused, setPaused] = useState(false)
   const [snapshot, setSnapshot] = useState([])
@@ -153,6 +165,21 @@ export default function RequestLogView() {
               {t('log.shortcuts')}
             </span>
             <select
+              value={channel}
+              onChange={(e) => {
+                setChannel(e.target.value)
+                fetchAll()
+              }}
+              className="h-8 max-w-40 rounded-md border border-input bg-background px-2 text-xs"
+            >
+              <option value="">{t('log.allChannels')}</option>
+              {channels.map((c) => (
+                <option key={c.channel} value={c.channel}>
+                  {c.channel} ({c.count})
+                </option>
+              ))}
+            </select>
+            <select
               value={filters.method}
               onChange={(e) => setFilters({ method: e.target.value })}
               className="h-8 rounded-md border border-input bg-background px-2 text-xs"
@@ -184,6 +211,7 @@ export default function RequestLogView() {
             <Table>
               <TableHeader className="sticky top-0 bg-card">
                 <TableRow>
+                  <TableHead>{t('log.columns.channel')}</TableHead>
                   <TableHead>{t('log.columns.time')}</TableHead>
                   <TableHead>{t('log.columns.method')}</TableHead>
                   <TableHead>{t('log.columns.path')}</TableHead>
@@ -197,7 +225,7 @@ export default function RequestLogView() {
                 <TableBody>
                   {filtered.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="p-0">
+                      <TableCell colSpan={6} className="p-0">
                         <EmptyState
                           icon={Inbox}
                           description={
@@ -214,6 +242,9 @@ export default function RequestLogView() {
                         data-state={selected?.id === r.id ? 'selected' : undefined}
                         onClick={() => select(r.id)}
                       >
+                        <TableCell className="max-w-28 truncate font-mono text-xs text-muted-foreground">
+                          {r.channel}
+                        </TableCell>
                         <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
                           {r.started_at}
                         </TableCell>

@@ -23,6 +23,7 @@ mod ports;
 mod publish;
 mod state;
 mod token_check;
+mod trace_log;
 
 use std::path::PathBuf;
 
@@ -73,7 +74,8 @@ async fn main() -> Result<()> {
     };
 
     // 本地发布管理 UI(常驻;由 daemon 和 API 共用一份共享状态)。
-    inspect::init();
+    // 请求日志按通道持久化到 <dataroot>/traces/。
+    inspect::init(dataroot.join("traces"));
     publish::set_state_path(state_path.clone());
     {
         let addr: std::net::SocketAddr = UI_ADDR.parse().expect("valid UI address");

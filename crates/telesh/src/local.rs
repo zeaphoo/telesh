@@ -4,7 +4,6 @@
 //! (yamux 发 RST),边缘据此回 502。
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -15,17 +14,17 @@ use tracing::debug;
 /// 本地拨号的超时。
 const DIAL_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// 给 inspector 用的本地递增 id(yamux 不暴露可复用的 u64)。
-static NEXT_LOCAL_STREAM: AtomicU64 = AtomicU64::new(1);
-
 /// 处理一条数据面流:拨本地服务,然后双向泵。
 ///
 /// 流已经是 tokio I/O(目标头已由调用方读完)。
-pub async fn handle_stream<S>(stream: S, local_addr: SocketAddr)
-where
+pub async fn handle_stream<S>(
+    stream: S,
+    local_addr: SocketAddr,
+    section: Option<crate::publish::Section>,
+) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    let stream_id = NEXT_LOCAL_STREAM.fetch_add(1, Ordering::Relaxed);
+    let stream_id = crate::inspect::next_stream_id();
     // 本地目标由端口扫描得出(127.0.0.1 或 ::1),不必再解析主机名。
     let conn = match timeout(DIAL_TIMEOUT, TcpStream::connect(local_addr)).await {
         Ok(Ok(conn)) => conn,
@@ -39,7 +38,7 @@ where
         }
     };
     debug!(stream_id, %local_addr, "data-plane stream accepted, pumping");
-    crate::inspect::start_stream(stream_id, local_addr);
+    crate::inspect::start_stream(stream_id, local_addr, section);
     pump(conn, stream, stream_id).await;
     crate::inspect::finish_stream(stream_id);
 }

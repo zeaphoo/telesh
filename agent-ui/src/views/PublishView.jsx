@@ -34,6 +34,7 @@ import {
   DialogTitle,
 } from '../components/ui/dialog'
 import { Label } from '../components/ui/label'
+import { Switch } from '../components/ui/switch'
 import {
   Table,
   TableBody,
@@ -85,12 +86,6 @@ function StatusCell({ entry }) {
   )
 }
 
-/** 端口列表太长时截断,避免把界面撑破。 */
-function portListText(ports, max = 16) {
-  if (ports.length <= max) return ports.join(', ')
-  return `${ports.slice(0, max).join(', ')} … (+${ports.length - max})`
-}
-
 /** 可勾选的端口行(发布对话框与远程连接规则对话框共用)。 */
 function PortRow({ port, process, hint, selected, onSelect }) {
   return (
@@ -129,6 +124,8 @@ export default function PublishView() {
     p2pPolicy,
     applyP2pPolicy,
     listServices,
+    settings,
+    applySettings,
   } = useAgent()
 
   // 发布对话框
@@ -161,6 +158,20 @@ export default function PublishView() {
   const policyMode = p2pPolicy?.mode || 'selected'
   const policyPorts = p2pPolicy?.ports || []
 
+  // 请求追踪:按 (section, 端口) 存,publish 与 p2p 分开;没记录 = 默认开。
+  function traceOn(section, port) {
+    return settings?.[section]?.[String(port)]?.trace ?? true
+  }
+  function toggleTrace(section, port) {
+    const key = String(port)
+    const next = {
+      publish: { ...(settings?.publish ?? {}) },
+      p2p: { ...(settings?.p2p ?? {}) },
+    }
+    next[section][key] = { ...(next[section][key] ?? {}), trace: !traceOn(section, port) }
+    applySettings(next)
+  }
+
   // 去重后的监听端口(用端口号做 key)。
   const listening = useMemo(() => {
     const byPort = new Map()
@@ -188,6 +199,7 @@ export default function PublishView() {
     [listening, modePorts]
   )
   const listeningSet = useMemo(() => new Set(listening.map((p) => p.port)), [listening])
+  const listeningByPort = useMemo(() => new Map(listening.map((p) => [p.port, p])), [listening])
 
   const protocolHint = (p) => {
     if (p.ssh_hint) return <StatusBadge state="live" label={t('publish.detectedSsh')} />
@@ -389,6 +401,7 @@ export default function PublishView() {
                   <TableHead className="w-28">{t('publish.columns.port')}</TableHead>
                   <TableHead>{t('publish.columns.target')}</TableHead>
                   <TableHead>{t('publish.columns.status')}</TableHead>
+                  <TableHead className="w-20">{t('publish.columns.trace')}</TableHead>
                   <TableHead className="w-28 text-right">
                     {t('publish.columns.actions')}
                   </TableHead>
@@ -401,6 +414,17 @@ export default function PublishView() {
                     <TableCell className="font-mono text-xs">{targetOf(e)}</TableCell>
                     <TableCell>
                       <StatusCell entry={e} />
+                    </TableCell>
+                    <TableCell>
+                      {e.kind === 'http' ? (
+                        <Switch
+                          checked={traceOn('publish', e.local_port)}
+                          onCheckedChange={() => toggleTrace('publish', e.local_port)}
+                          aria-label={t('publish.trace')}
+                        />
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       <Button
@@ -497,9 +521,32 @@ export default function PublishView() {
                 </h3>
                 <p className="text-xs text-muted-foreground">{modeSummary}</p>
                 {reachable.length > 0 ? (
-                  <p className="mt-1 font-mono text-xs break-all text-foreground">
-                    {portListText(reachable)}
-                  </p>
+                  <div className="mt-2 space-y-1.5">
+                    {reachable.map((port) => {
+                      const info = listeningByPort.get(port)
+                      return (
+                        <div key={port} className="flex items-center gap-3">
+                          <span className="w-14 font-mono text-xs tabular-nums">{port}</span>
+                          {info?.http_hint ? (
+                            <label className="flex cursor-pointer items-center gap-1.5">
+                              <Switch
+                                checked={traceOn('p2p', port)}
+                                onCheckedChange={() => toggleTrace('p2p', port)}
+                                aria-label={t('publish.trace')}
+                              />
+                              <span className="text-xs text-muted-foreground">
+                                {t('publish.traceToggle')}
+                              </span>
+                            </label>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">
+                              {t('publish.notHttp')}
+                            </span>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
                 ) : (
                   policyMode === 'selected' && (
                     <p className="mt-1 text-xs text-muted-foreground">
