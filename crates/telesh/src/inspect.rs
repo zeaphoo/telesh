@@ -46,6 +46,35 @@ pub struct RequestRecord {
     pub resp_payload: String,
 }
 
+/// How the current response body is framed — so we know when the response is
+/// complete (and can stop the duration timer there instead of at stream close).
+enum RespBody {
+    /// Head not parsed yet.
+    Pending,
+    /// No body (1xx / 204 / 304 / HEAD).
+    Empty,
+    /// `Content-Length: n`.
+    Length,
+    /// `Transfer-Encoding: chunked`.
+    Chunked,
+    /// Delimited by connection close.
+    UntilClose,
+    /// Fully received.
+    Done,
+}
+
+/// Chunked-transfer sub-state.
+enum ChunkState {
+    /// Reading a chunk-size line.
+    Size,
+    /// Reading `resp_body_left` bytes of chunk data.
+    Data,
+    /// Expecting the CRLF after chunk data.
+    DataCrlf,
+    /// Reading trailer lines after the zero-size chunk.
+    Trailers,
+}
+
 /// Per-stream capture state while the stream is alive.
 ///
 /// HTTP/1.1 keep-alive multiplexes several requests over one TCP stream; we
@@ -58,8 +87,10 @@ pub struct StreamCapture {
     req_bytes: u64,
     /// Bytes attributed to the current request segment.
     req_seg: u64,
-    /// Header parse buffer for the current response.
+    /// Preview buffer (head + body, capped) for the current response.
     resp_head: Vec<u8>,
+    /// Response-head parse buffer, up to the `\r\n\r\n` terminator.
+    resp_parse: Vec<u8>,
     /// Response bytes since stream start.
     resp_bytes: u64,
     /// Bytes attributed to the current response segment.
@@ -75,6 +106,14 @@ pub struct StreamCapture {
     scan: usize,
     /// Current request header block is complete (`\r\n\r\n` seen).
     head_done: bool,
+    /// Response head fully parsed.
+    resp_head_done: bool,
+    /// Response body framing.
+    resp_body: RespBody,
+    /// `Length`: bytes left; `Chunked`: bytes left in the current chunk data.
+    resp_body_left: u64,
+    /// Chunked sub-state.
+    chunk_state: ChunkState,
 }
 
 /// Per-stream routing info kept while the stream is alive: where to dial for a
@@ -252,11 +291,48 @@ pub fn observe_response(stream_id: u64, data: &[u8]) {
     let m = c.value_mut();
     m.resp_bytes += data.len() as u64;
     m.resp_seg += data.len() as u64;
-    if m.status.is_none() && m.resp_head.len() < MAX_HEAD {
-        m.resp_head.extend_from_slice(data);
-        if let Some(code) = parse_status_line(&m.resp_head) {
+
+    // Preview buffer (head + body, capped).
+    if m.resp_head.len() < MAX_HEAD {
+        let take = (MAX_HEAD - m.resp_head.len()).min(data.len());
+        m.resp_head.extend_from_slice(&data[..take]);
+    }
+
+    if !m.resp_head_done {
+        // Buffer until the header terminator, then work out the body framing.
+        // Appends the whole chunk so body bytes after the head aren't lost
+        // (chunks are <= 16 KiB, and we give up past MAX_HEAD).
+        m.resp_parse.extend_from_slice(data);
+        let Some(end) = find_head_end(&m.resp_parse) else {
+            if m.resp_parse.len() >= MAX_HEAD {
+                // Head too big to parse: fall back to "until close".
+                if let Some(code) = parse_status_line(&m.resp_parse) {
+                    m.status = Some(code);
+                }
+                m.resp_head_done = true;
+                m.resp_body = RespBody::UntilClose;
+                m.resp_parse.clear();
+            }
+            return;
+        };
+        if let Some(code) = parse_status_line(&m.resp_parse) {
             m.status = Some(code);
         }
+        let head: Vec<u8> = m.resp_parse[..end].to_vec();
+        let body: Vec<u8> = m.resp_parse.split_off(end);
+        m.resp_parse.clear();
+        m.resp_body = parse_body_kind(m, &head);
+        m.resp_head_done = true;
+        if m.advance_body(&body) {
+            push_record(i, stream_id, m);
+        }
+        return;
+    }
+
+    if m.advance_body(data) {
+        // Response complete: the request is done, so finalize now instead of
+        // waiting for the keep-alive stream to close.
+        push_record(i, stream_id, m);
     }
 }
 
@@ -281,6 +357,7 @@ impl StreamCapture {
             req_bytes: 0,
             req_seg: 0,
             resp_head: Vec::new(),
+            resp_parse: Vec::new(),
             resp_bytes: 0,
             resp_seg: 0,
             method: None,
@@ -289,6 +366,77 @@ impl StreamCapture {
             seg_started: Instant::now(),
             scan: 0,
             head_done: false,
+            resp_head_done: false,
+            resp_body: RespBody::Pending,
+            resp_body_left: 0,
+            chunk_state: ChunkState::Size,
+        }
+    }
+
+    /// Consume response-body bytes; `true` once the response is fully received.
+    fn advance_body(&mut self, data: &[u8]) -> bool {
+        let mut rest = data;
+        loop {
+            match self.resp_body {
+                RespBody::Empty | RespBody::Done => return true,
+                RespBody::UntilClose | RespBody::Pending => return false,
+                RespBody::Length => {
+                    let take = rest.len().min(self.resp_body_left as usize);
+                    self.resp_body_left -= take as u64;
+                    if self.resp_body_left == 0 {
+                        self.resp_body = RespBody::Done;
+                        return true;
+                    }
+                    return false;
+                }
+                RespBody::Chunked => match self.chunk_state {
+                    ChunkState::Size => {
+                        let Some(nl) = rest.iter().position(|&b| b == b'\n') else {
+                            return false;
+                        };
+                        let size = std::str::from_utf8(&rest[..nl])
+                            .ok()
+                            .and_then(|l| {
+                                let hex = l.trim().split(';').next().unwrap_or("").trim();
+                                u64::from_str_radix(hex, 16).ok()
+                            })
+                            .unwrap_or(0);
+                        rest = &rest[nl + 1..];
+                        if size == 0 {
+                            self.chunk_state = ChunkState::Trailers;
+                        } else {
+                            self.resp_body_left = size;
+                            self.chunk_state = ChunkState::Data;
+                        }
+                    }
+                    ChunkState::Data => {
+                        let take = rest.len().min(self.resp_body_left as usize);
+                        self.resp_body_left -= take as u64;
+                        rest = &rest[take..];
+                        if self.resp_body_left == 0 {
+                            self.chunk_state = ChunkState::DataCrlf;
+                        }
+                    }
+                    ChunkState::DataCrlf => {
+                        let Some(nl) = rest.iter().position(|&b| b == b'\n') else {
+                            return false;
+                        };
+                        rest = &rest[nl + 1..];
+                        self.chunk_state = ChunkState::Size;
+                    }
+                    ChunkState::Trailers => {
+                        let Some(nl) = rest.iter().position(|&b| b == b'\n') else {
+                            return false;
+                        };
+                        let empty = rest[..nl].iter().all(|&b| b == b'\r');
+                        rest = &rest[nl + 1..];
+                        if empty {
+                            self.resp_body = RespBody::Done;
+                            return true;
+                        }
+                    }
+                },
+            }
         }
     }
 }
@@ -334,10 +482,15 @@ fn push_record(i: &Inspector, stream_id: u64, c: &mut StreamCapture) {
     // reset segment state for the next request on this stream
     c.req_head.clear();
     c.resp_head.clear();
+    c.resp_parse.clear();
     c.req_seg = 0;
     c.resp_seg = 0;
     c.scan = 0;
     c.head_done = false;
+    c.resp_head_done = false;
+    c.resp_body = RespBody::Pending;
+    c.resp_body_left = 0;
+    c.chunk_state = ChunkState::Size;
     c.seg_started = Instant::now();
 }
 
@@ -347,6 +500,51 @@ fn find_line_end(buf: &[u8], from: usize) -> Option<usize> {
 
 fn has_header_terminator(buf: &[u8]) -> bool {
     buf.windows(4).any(|w| w == b"\r\n\r\n") || buf.windows(2).any(|w| w == b"\n\n")
+}
+
+/// Index just past the `\r\n\r\n` (or `\n\n`) header terminator.
+fn find_head_end(buf: &[u8]) -> Option<usize> {
+    if let Some(p) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+        return Some(p + 4);
+    }
+    buf.windows(2).position(|w| w == b"\n\n").map(|p| p + 2)
+}
+
+/// Work out the response body framing from its head (and the request method).
+fn parse_body_kind(m: &mut StreamCapture, head: &[u8]) -> RespBody {
+    let status = m.status.unwrap_or(0);
+    // HEAD responses and 1xx / 204 / 304 carry no body.
+    if m.method.as_deref() == Some("HEAD")
+        || (100..200).contains(&status)
+        || status == 204
+        || status == 304
+    {
+        return RespBody::Empty;
+    }
+    let text = String::from_utf8_lossy(head);
+    let mut content_length: Option<u64> = None;
+    let mut chunked = false;
+    for line in text.lines() {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        match name.trim().to_ascii_lowercase().as_str() {
+            "content-length" => content_length = value.trim().parse().ok(),
+            "transfer-encoding" if value.to_ascii_lowercase().contains("chunked") => chunked = true,
+            _ => {}
+        }
+    }
+    if chunked {
+        return RespBody::Chunked;
+    }
+    match content_length {
+        Some(0) => RespBody::Empty,
+        Some(n) => {
+            m.resp_body_left = n;
+            RespBody::Length
+        }
+        None => RespBody::UntilClose,
+    }
 }
 
 /// Match `METHOD SP TARGET SP HTTP/x.y` (and NOT a response status line).
@@ -687,6 +885,35 @@ mod tests {
         assert_eq!((b.method.as_str(), b.path.as_str()), ("GET", "/b"));
         assert!(b.payload.starts_with("GET /b"), "new request head must be preserved");
         assert_eq!(b.req_bytes, second.len() as u64);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 响应在连接关闭前收完时记录应立即落地 —— 时长不再包含 keep-alive 空闲。
+    #[tokio::test]
+    async fn response_completion_finalizes_the_record() {
+        let dir = std::env::temp_dir().join(format!("telesh-inspect-{}", rand::random::<u64>()));
+        init(dir.clone());
+
+        let addr: SocketAddr = "127.0.0.1:3100".parse().unwrap();
+        start_stream(9, addr, Some(crate::publish::Section::Publish));
+        observe_request(9, b"GET /x HTTP/1.1\r\nHost: x\r\n\r\n");
+        let resp = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
+        observe_response(9, resp);
+
+        // No finish_stream yet: the record must already be there.
+        {
+            let logs = inspector().logs.lock().unwrap();
+            let ring = logs.get("publish:3100").expect("channel");
+            assert_eq!(ring.len(), 1);
+            assert_eq!(ring[0].status, Some(200));
+            assert_eq!(ring[0].resp_bytes, resp.len() as u64);
+            assert!(ring[0].resp_payload.contains("hello"));
+        }
+
+        finish_stream(9);
+        let logs = inspector().logs.lock().unwrap();
+        assert_eq!(logs.get("publish:3100").unwrap().len(), 1, "no duplicate");
 
         std::fs::remove_dir_all(&dir).ok();
     }
