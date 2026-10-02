@@ -819,8 +819,14 @@ async fn send_local(local: SocketAddr, bytes: &[u8]) -> std::io::Result<Vec<u8>>
 }
 
 async fn index() -> impl IntoResponse {
+    // 入口页面不缓存:否则浏览器会一直用旧的 index.html(里面带着旧的图标 URL),
+    // 即使重新构建 / 换了图标也看不到变化。
     match AgentAssets::get("index.html") {
-        Some(f) => Html(String::from_utf8_lossy(&f.data).into_owned()).into_response(),
+        Some(f) => (
+            [(axum::http::header::CACHE_CONTROL, "no-store")],
+            Html(String::from_utf8_lossy(&f.data).into_owned()),
+        )
+            .into_response(),
         None => (
             StatusCode::NOT_FOUND,
             "agent-ui not built — run `pnpm build` in agent-ui/",
@@ -833,7 +839,21 @@ async fn assets(State(_): State<UiState>, path: UrlPath<String>) -> impl IntoRes
     match AgentAssets::get(&path) {
         Some(f) => {
             let mime = mime_for(&path);
-            ([(axum::http::header::CONTENT_TYPE, mime)], f.data).into_response()
+            // Vite 产出的资源带内容 hash,可以长缓存;其余(如 icon.svg)每次
+            // 重新校验,配合构建时拼的 `?v=` 保证图标更新后能刷新。
+            let cache = if path.starts_with("assets/") {
+                "public, max-age=31536000, immutable"
+            } else {
+                "no-cache"
+            };
+            (
+                [
+                    (axum::http::header::CONTENT_TYPE, mime),
+                    (axum::http::header::CACHE_CONTROL, cache),
+                ],
+                f.data,
+            )
+                .into_response()
         }
         None => (StatusCode::NOT_FOUND, "not found").into_response(),
     }
