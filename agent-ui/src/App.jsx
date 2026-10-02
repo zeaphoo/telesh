@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Activity, Network, RefreshCw, Server, SquareTerminal, UserRound } from 'lucide-react'
+import { Network, RefreshCw, Server, UserRound } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { AccountIndicator } from './components/account-indicator'
@@ -60,7 +60,7 @@ export default function App() {
 
   const brand = (
     <span className="flex shrink-0 items-center gap-2 text-sm font-semibold tracking-tight">
-      <SquareTerminal className="size-4" />
+      <img src="/icon.svg?v=2" alt="" className="size-5" />
       {t('title')}
     </span>
   )
@@ -120,11 +120,6 @@ export default function App() {
       <div className={tab === 'account' ? undefined : 'hidden'}>
         <AccountView />
       </div>
-
-      <footer className="flex w-full items-center gap-2 px-4 pb-6 text-xs text-muted-foreground sm:px-5">
-        <Activity className="size-3.5" />
-        telesh agent · 127.0.0.1:16345
-      </footer>
 
       <Toaster richColors position="top-right" />
     </AppShell>

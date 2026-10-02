@@ -305,16 +305,11 @@ export default function RequestLogView() {
             </div>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-2 p-0">
-            <div className="flex items-center justify-between gap-2 px-3">
-              <div className="flex items-center gap-2">
-                <Switch id="live-tail" checked={!paused} onCheckedChange={togglePause} />
-                <Label htmlFor="live-tail" className="text-xs text-muted-foreground">
-                  {paused ? t('log.paused') : t('log.live')}
-                </Label>
-              </div>
-              <span className="hidden text-xs text-muted-foreground lg:inline">
-                {t('log.shortcuts')}
-              </span>
+            <div className="flex items-center gap-2 px-3">
+              <Switch id="live-tail" checked={!paused} onCheckedChange={togglePause} />
+              <Label htmlFor="live-tail" className="text-xs text-muted-foreground">
+                {paused ? t('log.paused') : t('log.live')}
+              </Label>
             </div>
             <div className="max-h-[65vh] min-h-0 flex-1 overflow-auto xl:max-h-none">
               <Table>

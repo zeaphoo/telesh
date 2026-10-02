@@ -129,7 +129,6 @@
     "count": "{{shown}} / {{total}} 条",
     "listTitle": "请求列表",
     "allChannels": "全部通道",
-    "shortcuts": "j/k 选择 · / 过滤",
     "paused": "已暂停",
     "live": "实时",
     "opaque": "(二进制/不透明)",

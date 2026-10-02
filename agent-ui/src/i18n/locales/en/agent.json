@@ -129,7 +129,6 @@
     "count": "{{shown}} / {{total}} shown",
     "listTitle": "Requests",
     "allChannels": "All channels",
-    "shortcuts": "j/k select · / filter",
     "paused": "Paused",
     "live": "Live",
     "opaque": "(binary/opaque)",
