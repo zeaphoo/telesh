@@ -40,8 +40,13 @@ pub fn router() -> axum::Router {
 }
 
 async fn index() -> impl IntoResponse {
+    // 入口页面不缓存,否则浏览器会一直用旧的 index.html(包含旧的资源/图标 URL)。
     match FrontendAssets::get("index.html") {
-        Some(file) => Html(String::from_utf8_lossy(&file.data).into_owned()).into_response(),
+        Some(file) => (
+            [(axum::http::header::CACHE_CONTROL, "no-store")],
+            Html(String::from_utf8_lossy(&file.data).into_owned()),
+        )
+            .into_response(),
         None => (
             StatusCode::NOT_FOUND,
             "frontend not built — run `pnpm build` in server-ui/",
@@ -55,7 +60,20 @@ async fn assets(State(_): State<DashboardState>, path: UrlPath<String>) -> impl 
     match FrontendAssets::get(&path) {
         Some(file) => {
             let mime = mime_for(&path);
-            ([(axum::http::header::CONTENT_TYPE, mime)], file.data).into_response()
+            // Vite 产出的资源带内容 hash,可长缓存;其余(icon.svg 等)重新校验。
+            let cache = if path.starts_with("assets/") {
+                "public, max-age=31536000, immutable"
+            } else {
+                "no-cache"
+            };
+            (
+                [
+                    (axum::http::header::CONTENT_TYPE, mime),
+                    (axum::http::header::CACHE_CONTROL, cache),
+                ],
+                file.data,
+            )
+                .into_response()
         }
         None => (StatusCode::NOT_FOUND, "not found").into_response(),
     }
