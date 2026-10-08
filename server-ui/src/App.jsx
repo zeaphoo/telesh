@@ -36,7 +36,7 @@ export default function App() {
 
   const brand = (
     <span className="flex items-center gap-2 text-sm font-semibold tracking-tight">
-      <img src="/icon.svg?v=1" alt="" className="size-5" /> {t('title')}
+      <img src="/icon.svg?v=3" alt="" className="size-5" /> {t('title')}
     </span>
   )
 
