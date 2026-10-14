@@ -67,11 +67,14 @@ export default function App() {
   )
 
   // 导航栏右侧只保留登录状态与「开启的通道数」(隧道信息可能很多,不再逐个展示)。
-  // 一直显示:不按断点隐藏 —— 桌面外壳的窗口默认 1120px,低于 xl 就会什么都看不见。
+  //
+  // 一直显示,但空间不足时按固定优先级退让:**先通道 → 再显示名 → 最后才动账号**
+  // (账号那块见 `account-indicator.jsx`)。原来整块挂在 `xl:` 上,桌面外壳窗口
+  // 默认 1120px,低于 xl 就什么都看不见。
   const status = (
     <span className="flex min-w-0 items-center gap-3">
       <AccountIndicator account={account} />
-      <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums">
+      <span className="hidden shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums lg:flex">
         <Network className="size-3.5 shrink-0" />
         <span className="truncate">{t('header.channels', { n: openChannels })}</span>
       </span>

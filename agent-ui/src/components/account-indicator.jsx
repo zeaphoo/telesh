@@ -11,7 +11,8 @@ const TONE = { online: 'success', connecting: 'warning', offline: 'danger' }
  * `账户句柄 – 显示名`,否则显示状态文案。
  *
  * 这一块**一直显示**(原来挂在 `xl:` 断点上,桌面外壳窗口默认 1120px 就直接看不见)。
- * 窄屏时的退让顺序:先隐显示名(< lg),再把句柄截断;状态圆点与句柄不消失。
+ * 空间不足时的退让优先级由调用方定:**先通道数(`App.jsx` 里 `lg:`)→ 再显示名
+ * (这里 `md:`)→ 最后才动账号**;账号实在放不下才截断,状态圆点不消失。
  * 显示名可截断,数值不逐秒刷新,避免导航栏左右抖动。
  */
 export function AccountIndicator({ account, className }) {
@@ -33,7 +34,7 @@ export function AccountIndicator({ account, className }) {
             {formatAccount(account?.account)}
           </span>
           {account?.display_name && (
-            <span className="hidden min-w-0 items-center gap-2 lg:flex">
+            <span className="hidden min-w-0 items-center gap-2 md:flex">
               <span aria-hidden="true" className="shrink-0 text-muted-foreground/50">
                 –
               </span>
