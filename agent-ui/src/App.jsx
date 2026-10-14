@@ -61,13 +61,15 @@ export default function App() {
   const brand = (
     <span className="flex shrink-0 items-center gap-2 text-sm font-semibold tracking-tight">
       <img src="/icon.svg?v=26" alt="" className="size-5" />
-      {t('title')}
+      {/* 跟导航项标签同一个退让规则:窄屏只留图标。 */}
+      <span className="hidden truncate sm:inline">{t('title')}</span>
     </span>
   )
 
   // 导航栏右侧只保留登录状态与「开启的通道数」(隧道信息可能很多,不再逐个展示)。
+  // 一直显示:不按断点隐藏 —— 桌面外壳的窗口默认 1120px,低于 xl 就会什么都看不见。
   const status = (
-    <span className="hidden min-w-0 items-center gap-3 xl:flex">
+    <span className="flex min-w-0 items-center gap-3">
       <AccountIndicator account={account} />
       <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums">
         <Network className="size-3.5 shrink-0" />
