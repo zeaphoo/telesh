@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
+use anyhow::Context;
 use axum::extract::{Path as UrlPath, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse};
@@ -600,10 +601,43 @@ struct AgentAssets;
 #[derive(Clone)]
 struct UiState;
 
-pub async fn serve_dashboard(addr: SocketAddr) -> anyhow::Result<()> {
-    let app = axum::Router::new()
+/// 面板实际绑定的地址(`/api/instance` 用它回报)。
+static UI_ADDR: std::sync::OnceLock<SocketAddr> = std::sync::OnceLock::new();
+/// 面板启动时刻(unix 秒)。
+static UI_STARTED: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+
+/// 先把端口抢下来,**不开始服务**。
+///
+/// 单独拆出来是为了让 `main` 在动 dataroot/state 之前就能判掉「端口被占」:
+/// 是另一个 telesh 就提示并退出,是别的程序就报错(`crate::instance`)。
+pub async fn bind_dashboard(addr: SocketAddr) -> anyhow::Result<tokio::net::TcpListener> {
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("cannot bind the local dashboard at {addr}"))?;
+    let bound = listener.local_addr()?;
+    let _ = UI_ADDR.set(bound);
+    let _ = UI_STARTED.set(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    );
+    Ok(listener)
+}
+
+/// 在已经 bind 好的端口上开始服务。
+pub async fn serve(listener: tokio::net::TcpListener) -> anyhow::Result<()> {
+    let addr = listener.local_addr()?;
+    tracing::info!(%addr, "inspector dashboard listening (http://.../ )");
+    axum::serve(listener, router()).await?;
+    Ok(())
+}
+
+fn router() -> axum::Router {
+    axum::Router::new()
         .route("/api/tunnels", get(api_tunnels))
         .route("/api/ports", get(api_ports))
+        .route("/api/instance", get(api_instance))
         .route("/api/publish", get(api_publish).put(api_set_publish))
         .route("/api/account", get(api_account))
         .route("/api/p2p-policy", get(api_p2p_policy).put(api_set_p2p_policy))
@@ -615,11 +649,44 @@ pub async fn serve_dashboard(addr: SocketAddr) -> anyhow::Result<()> {
         .route("/api/requests/{id}/replay", post(api_replay))
         .route("/", get(index))
         .route("/{*path}", get(assets))
-        .with_state(UiState);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!(%addr, "inspector dashboard listening (http://.../ )");
-    axum::serve(listener, app).await?;
-    Ok(())
+        .layer(axum::middleware::from_fn(tag_server))
+        .with_state(UiState)
+}
+
+/// 给所有响应打上 `Server: telesh/<version>`:探测方靠它认指纹(另见
+/// `crate::instance`,那里以 JSON body 为准,这个头只是加一层可读性)。
+async fn tag_server(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut res = next.run(req).await;
+    res.headers_mut().insert(
+        axum::http::header::SERVER,
+        axum::http::HeaderValue::from_static(concat!("telesh/", env!("CARGO_PKG_VERSION"))),
+    );
+    res
+}
+
+/// 实例指纹:`telesh open`、桌面外壳、以及重复启动的第二个 `telesh` 都靠它
+/// 确认「这个端口上确实是 telesh」,而不是把陌生服务当面板。
+async fn api_instance() -> impl IntoResponse {
+    let uptime = UI_STARTED
+        .get()
+        .and_then(|start| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|now| now.as_secs().saturating_sub(*start))
+        })
+        .unwrap_or(0);
+    axum::Json(crate::instance::Instance {
+        app: "telesh".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        pid: std::process::id(),
+        ui_addr: UI_ADDR.get().map(|a| a.to_string()).unwrap_or_default(),
+        uptime_secs: uptime,
+        started_unix: UI_STARTED.get().copied().unwrap_or(0),
+    })
 }
 
 /// 本机正在监听的端口(启发式 `http_hint`,不是探测结果)。

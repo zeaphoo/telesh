@@ -9,6 +9,9 @@
 # 用法:
 #   scripts/prepare-sidecar.sh            # release
 #   scripts/prepare-sidecar.sh debug      # debug(配合 cargo tauri dev)
+#
+# 注意:**改过 crates/telesh 之后必须重跑本脚本**。否则 app 拉起的是上一次的
+# 旧二进制(实测踩过:加了 /api/instance 之后没重跑,app 探到 404 就拒绝开窗)。
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

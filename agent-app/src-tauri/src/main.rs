@@ -30,12 +30,23 @@ fn main() {
             prefs::init(&handle);
             tray::init(&handle)?;
 
-            // 先把后端拉起来、等端口就绪,再开窗。反过来的话 webview 会先撞上
+            // 先把后端拉起来、等它就绪,再开窗。反过来的话 webview 会先撞上
             // connection refused,而外部 http 页面不会自己重试。
             let worker = handle.clone();
             std::thread::spawn(move || {
-                if let Err(e) = agent::ensure_running() {
-                    eprintln!("[telesh-app] 后端未就绪: {e}");
+                let outcome = agent::ensure_running();
+                match &outcome {
+                    agent::Outcome::Ready => {}
+                    agent::Outcome::NotReady(e) => {
+                        eprintln!("[telesh-app] 后端未就绪: {e}");
+                    }
+                    agent::Outcome::Foreign(e) => {
+                        eprintln!("[telesh-app] {e};不打开窗口(托盘还在,可从菜单退出)");
+                    }
+                }
+                // 端口后面不是 telesh 就别开窗 —— 否则窗口会指到别人的服务上。
+                if matches!(outcome, agent::Outcome::Foreign(_)) {
+                    return;
                 }
                 // 窗口必须在主线程建(macOS 尤其如此)。
                 let opener = worker.clone();
