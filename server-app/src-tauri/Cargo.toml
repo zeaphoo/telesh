@@ -1,0 +1,34 @@
+[package]
+name = "telesh-server-app"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+license = "Apache-2.0"
+description = "telesh-server 桌面外壳:系统托盘 + 窗口,后端是随包的 telesh-server(sidecar)"
+publish = false
+
+# 独立于根工作区(见根 Cargo.toml 的 `exclude`):只有桌面外壳依赖 tauri,
+# 服务器端/无头 agent 的构建路径里不会出现 webkit 之类的 GUI 依赖。
+[workspace]
+
+[[bin]]
+name = "telesh-server-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `tray-icon`:托盘;`image-png`:编译期把托盘图标解成 RGBA 嵌进二进制。
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 读 server.toml 里的 control_addr,决定 webview 指向哪个端口。
+toml = "0.8"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

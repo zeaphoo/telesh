@@ -5,6 +5,7 @@
 //!   GET /api/tunnels            registered tunnels (http + tcp)
 //!   GET /api/metrics            aggregated counters
 //!   GET /api/metrics/prometheus Prometheus text format
+//!   GET /api/instance           fingerprint for the desktop shell
 //!   GET /                       built frontend from server-ui/dist (if present)
 
 use axum::extract::{Path as UrlPath, State};
@@ -14,6 +15,7 @@ use axum::routing::get;
 use rust_embed::RustEmbed;
 use serde::Serialize;
 
+use crate::config::config;
 use crate::metrics;
 use crate::registry::Registry;
 use crate::state::registry as get_registry;
@@ -34,6 +36,7 @@ pub fn router() -> axum::Router {
         .route("/api/tunnels", get(api_tunnels))
         .route("/api/metrics", get(api_metrics))
         .route("/api/metrics/prometheus", get(prometheus))
+        .route("/api/instance", get(api_instance))
         .route("/", get(index))
         .route("/{*path}", get(assets))
         .with_state(DashboardState)
@@ -180,4 +183,35 @@ async fn api_metrics() -> impl IntoResponse {
 
 async fn prometheus() -> impl IntoResponse {
     metrics::render_prometheus()
+}
+
+/// Identity probe used by `server-app`: it must confirm that the port is a
+/// telesh-server dashboard before pointing a webview at it.
+///
+/// `app` is deliberately different from the agent's `"telesh"` so a shell can
+/// never mistake one dashboard for the other.
+#[derive(Serialize)]
+struct Instance {
+    app: &'static str,
+    version: &'static str,
+    pid: u32,
+    /// The configured listen address (may be a wildcard).
+    control_addr: String,
+    /// Loopback URL a local browser/webview should use.
+    dashboard_url: String,
+    uptime_secs: u64,
+    started_unix: u64,
+}
+
+async fn api_instance() -> impl IntoResponse {
+    let cfg = config();
+    axum::Json(Instance {
+        app: "telesh-server",
+        version: env!("CARGO_PKG_VERSION"),
+        pid: std::process::id(),
+        control_addr: cfg.control_addr.to_string(),
+        dashboard_url: cfg.dashboard_url(),
+        uptime_secs: crate::state::uptime_secs(),
+        started_unix: crate::state::started_unix(),
+    })
 }

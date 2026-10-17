@@ -6,6 +6,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use dashmap::mapref::entry::Entry;
@@ -75,8 +76,19 @@ pub static SERVER_ID: OnceLock<[u8; 32]> = OnceLock::new();
 /// `telesh connect` never has to re-look-up.
 pub static P2P_SUBS: OnceLock<DashMap<String, Vec<UnboundedSender<Frame>>>> = OnceLock::new();
 
+/// Process start time, reported by `GET /api/instance` and used by the
+/// desktop shell to distinguish a live server from a stale port.
+static STARTED_AT: OnceLock<Instant> = OnceLock::new();
+static STARTED_UNIX: OnceLock<u64> = OnceLock::new();
 
 pub async fn init() -> Result<()> {
+    let _ = STARTED_AT.set(Instant::now());
+    let _ = STARTED_UNIX.set(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    );
     let _ = REGISTRY.set(Registry::new());
     let _ = P2P_DIR.set(DashMap::new());
     let _ = P2P_SUBS.set(DashMap::new());
@@ -91,6 +103,16 @@ pub async fn init() -> Result<()> {
     let pool = crate::db::open(&db_path).await?;
     let _ = DB.set(pool);
     Ok(())
+}
+
+/// Seconds since this process started serving.
+pub fn uptime_secs() -> u64 {
+    STARTED_AT.get().map(|t| t.elapsed().as_secs()).unwrap_or(0)
+}
+
+/// Unix timestamp of process start.
+pub fn started_unix() -> u64 {
+    STARTED_UNIX.get().copied().unwrap_or(0)
 }
 
 pub fn db() -> &'static SqlitePool {

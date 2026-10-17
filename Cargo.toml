@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
-# 桌面外壳(tauri)独立成自己的工作区:只有它依赖 GUI 栈(webkit2gtk 等),
-# 不带进 agent/server 的构建与 CI。
-exclude = ["agent-app/src-tauri"]
+# 桌面外壳(tauri:agent-app / server-app)各自独立成工作区:只有它们依赖 GUI 栈
+# (webkit2gtk 等),不带进 agent/server 的构建与 CI。
+exclude = ["agent-app/src-tauri", "server-app/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"

@@ -1,0 +1,12 @@
+# 这个 app 是独立工作区(见根 Cargo.toml 的 exclude),target 不在根 .gitignore 的
+# `/target/` 覆盖范围内。
+target/
+
+# sidecar 是构建产物,由 scripts/prepare-sidecar.sh 生成,不进仓库。
+/src-tauri/binaries/telesh-server-*
+
+# tauri-build 每次生成的 ACL schema。
+/src-tauri/gen/schemas/
+
+# 若走 pnpm/cargo-tauri 的话
+node_modules/

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "窗口内容是外部 http 源(127.0.0.1:9009),这里不授予任何 remote IPC —— dashboard 不需要调用 Tauri 命令,少了这块攻击面。",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

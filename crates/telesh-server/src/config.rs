@@ -13,7 +13,7 @@
 //! url   = "https://relay.example.com"
 //! ```
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -137,6 +137,22 @@ impl Config {
     /// 数据库文件:`<dataroot>/server.sqlite`。
     pub fn db_path(&self) -> PathBuf {
         self.dataroot.join("server.sqlite")
+    }
+
+    /// dashboard 在本机可访问的地址。`control_addr` 绑在通配地址(`0.0.0.0` /
+    /// `::`)时换成回环地址 —— 桌面外壳拿它开 webview。
+    pub fn dashboard_addr(&self) -> SocketAddr {
+        let ip = match self.control_addr.ip() {
+            IpAddr::V4(v4) if v4.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
+            IpAddr::V6(v6) if v6.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
+            ip => ip,
+        };
+        SocketAddr::new(ip, self.control_addr.port())
+    }
+
+    /// dashboard 的 URL(`http://<dashboard_addr>`)。
+    pub fn dashboard_url(&self) -> String {
+        format!("http://{}", self.dashboard_addr())
     }
 
     /// ACME 证书缓存目录:`<dataroot>/acme`,除非配置文件里另指了地方。
@@ -275,5 +291,21 @@ mod tests {
         assert_eq!(cfg.control_addr.port(), 9009);
         assert_eq!(cfg.data_addr.port(), 9008);
         assert_eq!(cfg.db_path(), std::path::Path::new("/tmp/ts/server.sqlite"));
+    }
+
+    /// dashboard 地址:通配绑定换成回环,具体地址原样保留。
+    #[test]
+    fn dashboard_addr_uses_loopback_for_wildcards() {
+        let mut cfg = Config::default();
+
+        cfg.control_addr = "0.0.0.0:9009".parse().unwrap();
+        assert_eq!(cfg.dashboard_addr(), "127.0.0.1:9009".parse().unwrap());
+        assert_eq!(cfg.dashboard_url(), "http://127.0.0.1:9009");
+
+        cfg.control_addr = "[::]:9009".parse().unwrap();
+        assert_eq!(cfg.dashboard_addr(), "[::1]:9009".parse().unwrap());
+
+        cfg.control_addr = "192.0.2.1:9009".parse().unwrap();
+        assert_eq!(cfg.dashboard_addr(), cfg.control_addr);
     }
 }
