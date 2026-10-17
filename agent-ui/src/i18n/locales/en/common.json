@@ -31,7 +31,9 @@
     "disconnected": "Disconnected"
   },
   "error": {
-    "api": "Cannot reach the inspector API"
+    "api": "API error",
+    "agentDown": "Cannot reach the agent dashboard",
+    "agentDownHint": "Retrying every {{seconds}}s. If it stays down, make sure the app is running; if it is, restart the tray app (or re-run telesh)."
   },
   "loading": "Loading…"
 }

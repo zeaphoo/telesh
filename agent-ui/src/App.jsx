@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
-import { Network, RefreshCw, Server, UserRound } from 'lucide-react'
+import { CircleAlert, Network, RefreshCw, Server, TriangleAlert, UserRound } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { AccountIndicator } from './components/account-indicator'
 import { AppShell } from './components/app-shell'
 import { LocaleSwitcher } from './components/locale-switcher'
 import { ThemeToggle } from './components/theme-toggle'
+import { Alert, AlertDescription, AlertTitle } from './components/ui/alert'
 import { Button } from './components/ui/button'
-import { Card, CardContent } from './components/ui/card'
 import { Toaster } from './components/ui/sonner'
 import { useAgent } from './store/useAgent'
 import AccountView from './views/AccountView'
@@ -20,6 +20,9 @@ const NAV = [
   { id: 'account', labelKey: 'nav.account', icon: UserRound },
 ]
 
+/** 轮询间隔。面板不可达时也是靠它自动恢复的,所以状态条里要把它说清楚。 */
+const POLL_MS = 2000
+
 export default function App() {
   const { t } = useTranslation()
   const { t: tc } = useTranslation('common')
@@ -27,6 +30,7 @@ export default function App() {
     publish,
     account,
     error,
+    agentDown,
     fetchAll,
     fetchPublish,
     fetchAccount,
@@ -52,7 +56,7 @@ export default function App() {
       fetchP2pPolicy()
       fetchSettings()
       fetchChannels()
-    }, 2000)
+    }, POLL_MS)
     return () => clearInterval(timer)
   }, [fetchAll, fetchPublish, fetchAccount, fetchP2pPolicy, fetchSettings, fetchChannels])
 
@@ -105,14 +109,26 @@ export default function App() {
       active={tab}
       onNavigate={(item) => setTab(item.id)}
     >
-      {error && (
-        <div className="px-4 pt-6 sm:px-6">
-          <Card>
-            <CardContent className="text-sm text-muted-foreground">
-              {tc('error.api')}: {error}
-            </CardContent>
-          </Card>
-        </div>
+      {/*
+        全局错误条:**只此一处**。面板不可达时各功能内的错误一律静默(见 store
+        的 `noteFailure`),所以不会出现同一条错在页面上重复三遍。
+
+        做成通栏贴边的状态条,而不是卡片:它是「当前状态」不是一条内容。
+        不给重试按钮 —— 轮询本来就会自动恢复,再放个按钮反而让人以为要点它。
+      */}
+      {(agentDown || error) && (
+        <Alert
+          variant={agentDown ? 'destructive' : 'default'}
+          className={`rounded-none border-x-0 border-t-0 px-4 py-2.5 sm:px-6 ${
+            agentDown ? 'border-destructive/30 bg-destructive/10' : 'border-warning/30 bg-warning/10'
+          }`}
+        >
+          {agentDown ? <TriangleAlert /> : <CircleAlert />}
+          <AlertTitle>{agentDown ? tc('error.agentDown') : tc('error.api')}</AlertTitle>
+          <AlertDescription>
+            {agentDown ? tc('error.agentDownHint', { seconds: POLL_MS / 1000 }) : error}
+          </AlertDescription>
+        </Alert>
       )}
 
       {/* Both views stay mounted so unsaved port/publish drafts survive tab switches. */}

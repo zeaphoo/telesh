@@ -210,7 +210,7 @@ export default function PublishView() {
   async function apply(next, okMsg) {
     const ok = await applyPublish(next)
     if (ok) toast.success(okMsg)
-    else toast.error(useAgent.getState().publishError || tc('error.api'))
+    else toast.error(useAgent.getState().actionError || tc('error.api'))
     return ok
   }
 
@@ -330,7 +330,7 @@ export default function PublishView() {
 
   async function submitRule() {
     const ok = await applyP2pPolicy({ mode: ruleMode, ports: rulePorts })
-    const { publishError: err } = useAgent.getState()
+    const { actionError: err } = useAgent.getState()
     if (ok) {
       toast.success(t('publish.inbound.saved'))
       setRuleOpen(false)

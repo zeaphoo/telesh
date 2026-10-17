@@ -31,7 +31,9 @@
     "disconnected": "连接断开"
   },
   "error": {
-    "api": "无法连接 inspector 接口"
+    "api": "接口出错",
+    "agentDown": "连不上 agent 面板",
+    "agentDownHint": "每 {{seconds}} 秒自动重试。若一直连不上,请确认程序正在运行;已经在运行的,重启托盘应用(或重新执行 telesh)。"
   },
   "loading": "加载中…"
 }
