@@ -8,8 +8,9 @@
   不会误删重连后新连接的注册。
 - 目标表按"当前已应用的条目"整体重建:同一个本地端口可以同时发布为 HTTP 和 TCP,
   逐条增删会互相误删。
-- 镜像已经搬进 UI;`telesh connect` 子命令已删除。镜像那条 lookup 连接用本机 agent
-  自己的身份登录服务端,不需要额外密钥。
+- 镜像既能在 UI 上配置,也有 `telesh connect` 这个薄 CLI;两者都只是写本机 agent
+  的 desired state,不再各自起进程。镜像那条 lookup 连接用本机 agent 自己的身份
+  登录服务端,不需要额外密钥。
 - HTTP 判定**真的探测**:每个端口一个进程生命周期内探一次(发一次 `HEAD /`,700ms
   超时,8 并发),端口消失后清缓存以便服务重启后重探;没探过时回落到端口表启发式。
 
@@ -30,7 +31,8 @@ telesh --dataroot /etc/telesh     # 或指定数据目录
 ```
 
 - 发布配置是 UI 上的**声明式状态**,进程负责 reconcile。
-- 老的 `http` / `tcp` / `p2p` / `connect` 子命令**已全部删除**。
+- 老的一隧道一进程的 `http` / `tcp` / `p2p` / `connect` 已删除;同名的 CLI
+  子命令现在只是本机 agent HTTP API 的薄客户端(见 §2.1),不会启动第二个进程。
 
 ## 2. 进程与 CLI
 
@@ -59,6 +61,23 @@ telesh --dataroot /etc/telesh     # 或指定数据目录
 - **访问方**(visitor):为 UI 上配置的"镜像"建立 lookup-only 控制连接 + 本地监听。
 
 两者都由同一份期望状态驱动。
+
+### 2.1 CLI 子命令
+
+`telesh` 的发布/镜像子命令只对**正在运行**的 agent 生效(默认
+`127.0.0.1:16345`,用 `--ui-port` 改)。它们通过本地 HTTP API 读写同一份
+desired state,不自己起进程:
+
+| 命令 | 作用 |
+|---|---|
+| `telesh open` | 打开本地面板 |
+| `telesh http <PORT> [-s NAME]` | 发布 HTTP 子域 |
+| `telesh tcp <PORT> [-r PORT]` | 发布公网 TCP 端口 |
+| `telesh p2p <PORT>... / --all / --none` | 设置 P2P 入站规则(覆盖式) |
+| `telesh connect ACCOUNT/NAME -l PORT` | 把远端服务镜像到本地端口 |
+| `telesh publish ls / rm <KIND> <PORT>` | 查看 / 删除发布条目 |
+
+`--json` 用于脚本;观测与复杂配置继续走 Web UI。
 
 ## 3. 本机端口发现
 

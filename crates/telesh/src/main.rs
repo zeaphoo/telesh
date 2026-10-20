@@ -13,9 +13,13 @@
 //! - `telesh`(无子命令):跑常驻 agent;面板在 `http://127.0.0.1:16345`
 //!   (用 `--ui-port` 换)。端口上已经有另一个 telesh 时,提示并正常退出。
 //! - `telesh open`:在浏览器里打开正在运行的面板(先确认那里真的是 telesh)。
+//! - `telesh http|tcp|p2p|connect|publish`:发布 / 镜像 / P2P 规则的 CLI 前端,
+//!   只对正在运行的 agent 生效(见 `cli.rs`)。
 
 mod account;
 mod auth;
+mod cli;
+mod cli_client;
 mod config;
 mod daemon;
 mod data;
@@ -31,44 +35,13 @@ mod token_check;
 mod trace_log;
 
 use std::net::{Ipv4Addr, SocketAddr};
-use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-/// 本地发布管理 UI 的默认端口(永远只监听 127.0.0.1)。
-const DEFAULT_UI_PORT: u16 = 16345;
-
-#[derive(Debug, Parser)]
-#[command(name = "telesh", version, about = "暴露本地端口:常驻 agent + 本地发布管理 UI")]
-struct Cli {
-    /// 数据目录:配置、身份/会话、发布配置都在这里。默认 `~/.telesh`。
-    #[arg(long, value_name = "DIR", global = true)]
-    dataroot: Option<PathBuf>,
-
-    /// 本地面板端口。
-    #[arg(long, value_name = "PORT", default_value_t = DEFAULT_UI_PORT, global = true)]
-    ui_port: u16,
-
-    /// 就绪后在默认浏览器里打开面板(没有图形会话时自动跳过)。
-    #[arg(long, global = true)]
-    open: bool,
-
-    #[command(subcommand)]
-    command: Option<Command>,
-}
-
-#[derive(Debug, Subcommand)]
-enum Command {
-    /// 在浏览器里打开正在运行的面板。
-    Open {
-        /// 只打印地址,不调起浏览器。
-        #[arg(long)]
-        print_only: bool,
-    },
-}
+use crate::cli::Cli;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -81,8 +54,8 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // 子命令:不碰数据目录、不读配置,直接对已经在跑的实例干活。
-    if let Some(Command::Open { print_only }) = cli.command {
-        return instance::open(cli.ui_port, print_only);
+    if let Some(command) = cli.command {
+        return cli::run(command, cli.ui_port, cli.json).await;
     }
 
     // 先把面板端口抢下来。端口被占要在动 dataroot/state 之前就判掉:
