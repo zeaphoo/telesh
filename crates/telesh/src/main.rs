@@ -55,7 +55,18 @@ async fn main() -> Result<()> {
 
     // 子命令:不碰数据目录、不读配置,直接对已经在跑的实例干活。
     if let Some(command) = cli.command {
-        return cli::run(command, cli.ui_port, cli.json).await;
+        match cli::run(command, cli.ui_port, cli.json).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                // agent 不可用用 125(podman/docker 的约定),其它错误用 1。
+                if let Some(err) = e.downcast_ref::<cli_client::AgentError>() {
+                    eprintln!("{err}");
+                    std::process::exit(if err.is_unavailable() { 125 } else { 1 });
+                }
+                eprintln!("{e:#}");
+                std::process::exit(1);
+            }
+        }
     }
 
     // 先把面板端口抢下来。端口被占要在动 dataroot/state 之前就判掉:

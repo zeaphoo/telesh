@@ -129,7 +129,13 @@ pub enum PublishCommand {
 /// 执行一个子命令。`open` 不依赖 agent 的 HTTP API,其余都需要。
 pub async fn run(command: Command, ui_port: u16, json: bool) -> Result<()> {
     if let Command::Open { print_only } = command {
-        return crate::instance::open(ui_port, print_only);
+        let info = AgentClient::probe(ui_port).await?;
+        let url = info.url();
+        println!("{url}");
+        if !print_only {
+            crate::instance::open_panel(&url);
+        }
+        return Ok(());
     }
 
     let client = AgentClient::connect(ui_port).await?;

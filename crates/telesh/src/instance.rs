@@ -117,27 +117,6 @@ pub fn handle_occupied(port: u16, open: bool) -> Result<()> {
     }
 }
 
-/// `telesh open`:在浏览器里打开正在运行的面板。
-pub fn open(port: u16, print_only: bool) -> Result<()> {
-    match probe(port) {
-        Probe::Telesh(info) => {
-            let url = info.url();
-            println!("{url}");
-            if !print_only {
-                open_panel(&url);
-            }
-            Ok(())
-        }
-        Probe::Foreign(server) => bail!(
-            "127.0.0.1:{port} 上不是 telesh{},没有可以打开的面板(旧版 telesh 没有 /api/instance,升级后再试)",
-            server.map(|s| format!("({s})")).unwrap_or_default()
-        ),
-        Probe::Nothing => bail!(
-            "127.0.0.1:{port} 上没有 telesh 在跑;先起一个,或用 `--ui-port` 指定端口"
-        ),
-    }
-}
-
 /// 有图形会话就调起默认浏览器,没有就把地址打出来 —— SSH 里真正需要的是那行地址。
 pub fn open_panel(url: &str) {
     if !has_display() {
