@@ -75,6 +75,16 @@ pub async fn open_stream(
 ) {
     let http = traffic_key.starts_with("http:");
 
+    // 额度判定：开流前问一次策略，拒绝时给 HTTP 客户端一个明确的状态码。
+    let policy = crate::state::policy();
+    if !policy.allow_new_stream(agent_id) {
+        warn!(agent_id, key = %traffic_key, "quota exhausted; refusing a new connection");
+        if http {
+            let _ = write_error(&mut socket, "402", "Monthly traffic quota exhausted").await;
+        }
+        return;
+    }
+
     if let Some(handle) = registry().data_handle(agent_id) {
         match handle.open_stream(target).await {
             Ok(stream) => {
@@ -82,6 +92,8 @@ pub async fn open_stream(
                 metrics::inc_conns();
                 let (up, down) = pump_data(socket, stream, http).await;
                 metrics::add_traffic(&traffic_key, up, down);
+                // 记账（廉价同步），供额度判定使用。
+                policy.on_traffic(agent_id, up, down);
                 metrics::dec_conns();
                 return;
             }

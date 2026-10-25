@@ -13,6 +13,7 @@ pub mod data;
 pub mod db;
 pub mod ingress;
 pub mod metrics;
+pub mod policy;
 pub mod registry;
 pub mod relay_config;
 pub mod state;

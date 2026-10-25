@@ -439,11 +439,21 @@ async fn lookup_p2p(account: &str, name: &str) -> P2PAddrResp {
 
 /// 发布一条 HTTP 隧道:把一个本地目标挂到子域上。
 async fn register_http(agent_id: &str, conn_id: u64, req: &TunnelPublish) -> TunnelResult {
-    let sub_domain = match req.name.as_deref() {
-        Some(s) if proto::validate_subdomain(s) => s.to_string(),
-        Some(_) => return TunnelResult::Invalid,
-        None => proto::random_subdomain(),
+    // 子域规则（免费用户的前缀、固定域名等）由策略决定。
+    let policy = crate::state::policy();
+    let limits = policy.limits(agent_id);
+    let sub_domain = match policy.resolve_subdomain(agent_id, req.name.as_deref()) {
+        Ok(s) => s,
+        Err(_) => return TunnelResult::Invalid,
     };
+    // 上限只管「新名字」：同一个 agent 重发一个已经属于它的子域是替换，不算新增。
+    if let Some(max) = limits.max_http_tunnels {
+        let existing = registry().sub_domains_of(agent_id);
+        if !existing.iter().any(|s| s == &sub_domain) && existing.len() >= max as usize {
+            tracing::warn!(agent_id, max, "http tunnel limit reached");
+            return TunnelResult::Error { message: format!("http tunnel limit reached ({max})") };
+        }
+    }
     let route = Route {
         agent_id: agent_id.to_string(),
         conn_id,
@@ -462,6 +472,16 @@ async fn register_http(agent_id: &str, conn_id: u64, req: &TunnelPublish) -> Tun
 
 /// 发布一条裸 TCP 隧道:分配一个公网端口。
 async fn register_tcp(agent_id: &str, conn_id: u64, req: &TunnelPublish) -> TunnelResult {
+    // 上限只管「新端口」：重发一个已经属于自己的端口不算新增。
+    if let Some(max) = crate::state::policy().limits(agent_id).max_tcp_tunnels {
+        let is_new = req
+            .remote_port
+            .is_none_or(|p| !crate::tcp::owned_by(p, agent_id));
+        if is_new && crate::tcp::count_for_agent(agent_id) >= max as usize {
+            tracing::warn!(agent_id, max, "tcp tunnel limit reached");
+            return TunnelResult::Error { message: format!("tcp tunnel limit reached ({max})") };
+        }
+    }
     match crate::tcp::register(agent_id, conn_id, &req.target, req.remote_port).await {
         Ok(port) => {
             info!(agent_id, port, target = %req.target, "tcp tunnel registered");
@@ -469,7 +489,7 @@ async fn register_tcp(agent_id: &str, conn_id: u64, req: &TunnelPublish) -> Tunn
         }
         Err(crate::tcp::TcpError::InUse) => TunnelResult::NameTaken,
         Err(crate::tcp::TcpError::OutOfRange) => TunnelResult::Invalid,
-        Err(e) => TunnelResult::Error(e.to_string()),
+        Err(e) => TunnelResult::Error { message: e.to_string() },
     }
 }
 
@@ -495,7 +515,9 @@ async fn dispatch(
             let result = match req.kind {
                 TunnelKind::Http => register_http(agent_id, conn_id, &req).await,
                 TunnelKind::Tcp => register_tcp(agent_id, conn_id, &req).await,
-                TunnelKind::P2p => TunnelResult::Error("p2p tunnels use p2p_announce".into()),
+                TunnelKind::P2p => TunnelResult::Error {
+                    message: "p2p tunnels use p2p_announce".into(),
+                },
             };
             let _ = tx.send(Frame::TunnelResp(TunnelResp { id: req.id, result }));
         }
@@ -598,6 +620,8 @@ async fn dispatch(
         // Traffic the server cannot observe (pure P2P): account it per service.
         Frame::Traffic(t) => {
             crate::metrics::add_traffic(&format!("p2p:{}", t.name), t.up, t.down);
+            // P2P 流量服务端看不到明细，只能按 agent 上报记账（额度用）。
+            crate::state::policy().on_traffic(agent_id, t.up, t.down);
         }
         // Router port mapping: informational; the port is opened on the agent.
         Frame::TcpMapped(m) => {

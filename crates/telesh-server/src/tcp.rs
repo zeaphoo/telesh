@@ -115,6 +115,21 @@ pub async fn register(
     Ok(port)
 }
 
+/// 该 agent 目前占用了几条 TCP 隧道。
+pub fn count_for_agent(agent_id: &str) -> usize {
+    tunnels()
+        .iter()
+        .filter(|t| t.route.agent_id == agent_id)
+        .count()
+}
+
+/// 这个公网端口是不是已经归该 agent 了。
+pub fn owned_by(port: u16, agent_id: &str) -> bool {
+    tunnels()
+        .get(&port)
+        .is_some_and(|t| t.route.agent_id == agent_id)
+}
+
 /// Stop and release all TCP tunnels owned by `agent_id` (agent disconnect).
 pub fn unregister_all(agent_id: &str, conn_id: u64) {
     let ports: Vec<u16> = tunnels()

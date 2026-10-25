@@ -5,6 +5,7 @@
 //! distributed registry + gossip later.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -16,6 +17,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use telesh_protocol::{EndpointAddr, EndpointId, Frame, P2PAddrResp, P2PAnnounce};
 
+use crate::policy::Policy;
 use crate::registry::Registry;
 
 /// Agents by subdomain / agent_id.
@@ -65,6 +67,11 @@ pub fn next_conn_id() -> u64 {
         .fetch_add(1, Ordering::Relaxed)
 }
 
+/// 版本策略（额度 / 子域规则）。默认 [`crate::policy::Unlimited`]。
+///
+/// 商业版（`telesh_super`）在 `main` 里先 [`set_policy`]，再开始服务。
+pub static POLICY: OnceLock<Arc<dyn Policy>> = OnceLock::new();
+
 /// Accounts / keys / sessions.
 pub static DB: OnceLock<SqlitePool> = OnceLock::new();
 
@@ -113,6 +120,18 @@ pub fn uptime_secs() -> u64 {
 /// Unix timestamp of process start.
 pub fn started_unix() -> u64 {
     STARTED_UNIX.get().copied().unwrap_or(0)
+}
+
+/// 安装版本策略。只能设置一次；重复设置会被忽略（便于测试）。
+pub fn set_policy(policy: Arc<dyn Policy>) {
+    if POLICY.set(policy).is_err() {
+        tracing::warn!("policy already installed; ignoring this one");
+    }
+}
+
+/// 当前版本策略；没有安装时是开源版的不限额实现。
+pub fn policy() -> &'static Arc<dyn Policy> {
+    POLICY.get_or_init(|| Arc::new(crate::policy::Unlimited))
 }
 
 pub fn db() -> &'static SqlitePool {
