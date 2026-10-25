@@ -426,7 +426,10 @@ pub enum TunnelResult {
     NameTaken,
     /// 名字或端口不合法。
     Invalid,
-    Error(String),
+    /// 其它拒绝原因。用结构体变体:内部 tag 的枚举不支持带字符串的新类型变体
+    /// （serde 会报 "cannot serialize tagged newtype variant ... containing a string",
+    ///  导致错误回复根本发不出去）。
+    Error { message: String },
 }
 
 /// Server → agent:某条发布请求的结果(按 `id` 配对)。

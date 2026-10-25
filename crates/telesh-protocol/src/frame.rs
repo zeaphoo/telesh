@@ -132,6 +132,25 @@ mod tests {
         })));
     }
 
+    /// `TunnelResult` 用内部 tag(`kind`),内部 tag 的枚举不支持带字符串的
+    /// 新类型变体 —— 一旦写成 `Error(String)`,错误回复会在服务端编码阶段失败,
+    /// agent 永远停在 pending。这条测试盯的就是那个坑。
+    #[test]
+    fn tunnel_error_result_roundtrips() {
+        for result in [
+            TunnelResult::Error {
+                message: "http tunnel limit reached (1)".into(),
+            },
+            TunnelResult::NameTaken,
+            TunnelResult::Invalid,
+        ] {
+            let f = Frame::TunnelResp(TunnelResp { id: 42, result });
+            let text = encode(&f).unwrap();
+            let back = decode(&text).unwrap();
+            assert_eq!(format!("{back:?}"), format!("{f:?}"), "roundtrip: {text}");
+        }
+    }
+
     #[test]
     fn unknown_type_is_an_error_the_caller_ignores() {
         assert!(decode(r#"{"type":"not_a_message"}"#).is_err());

@@ -304,9 +304,9 @@ fn apply_tunnel_resp(resp: TunnelResp, applied: &mut [Applied]) {
             a.state = State::Error;
             a.detail = Some("名字或端口不合法".into());
         }
-        TunnelResult::Error(e) => {
+        TunnelResult::Error { message } => {
             a.state = State::Error;
-            a.detail = Some(e);
+            a.detail = Some(message);
         }
     }
 }
