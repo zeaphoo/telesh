@@ -157,9 +157,25 @@ build_app() {
     echo "构建 Tauri 客户端：$app"
     local app_target
     app_target="$(cargo_target_dir "$tauri_dir/Cargo.toml")"
-    # 清掉上次的 .app/.dmg，避免把旧产物当成本次结果。
-    rm -rf "$app_target/release/bundle/macos" "$app_target/release/bundle/dmg"
-    (cd "$tauri_dir" && cargo tauri build --bundles app)
+
+    # Tauri 在打包阶段完成签名/公证。codesign 请求 Apple 时间戳时偶发网络
+    # 失败（"A timestamp was expected but was not found"），整个步骤重试即可；
+    # 构建缓存已存在，重试成本主要在签名/公证。
+    local attempt=1 max_attempts=3
+    while true; do
+        # 清掉上次的 .app/.dmg，避免把旧/半成品产物当成本次结果。
+        rm -rf "$app_target/release/bundle/macos" "$app_target/release/bundle/dmg"
+        if (cd "$tauri_dir" && cargo tauri build --bundles app); then
+            break
+        fi
+        if (( attempt >= max_attempts )); then
+            echo "Tauri 构建/签名失败（已重试 ${max_attempts} 次）：$app" >&2
+            exit 1
+        fi
+        attempt=$((attempt + 1))
+        echo "Tauri 构建/签名失败，5 秒后重试（${attempt}/${max_attempts}）：$app" >&2
+        sleep 5
+    done
 
     local bundle_dir app_bundle
     bundle_dir="$app_target/release/bundle"
