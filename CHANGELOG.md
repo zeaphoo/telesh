@@ -49,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tunnel_resp` error variants could not be sent over the wire.
 - Wrong-type dashboard responses are no longer mistaken for a running agent, and
   the CLI now prints actionable hints when the agent is not running.
+- Windows: default data root and `~` expansion now fall back to `USERPROFILE`
+  when `HOME` is not set.
 
 [Unreleased]: https://github.com/zeaphoo/telesh/compare/v0.1.0-rc.1...HEAD
 [0.1.0-rc.1]: https://github.com/zeaphoo/telesh/releases/tag/v0.1.0-rc.1

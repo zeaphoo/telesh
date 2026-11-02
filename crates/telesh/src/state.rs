@@ -59,11 +59,23 @@ impl AgentState {
     }
 }
 
-/// 默认数据目录:`~/.telesh`;没有 HOME 时用当前目录下的 `.telesh`。
+/// 用户主目录:Unix 用 `HOME`,Windows 用 `USERPROFILE`。
+pub(crate) fn home_dir() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("HOME") {
+        return Some(PathBuf::from(home));
+    }
+    #[cfg(windows)]
+    if let Some(home) = std::env::var_os("USERPROFILE") {
+        return Some(PathBuf::from(home));
+    }
+    None
+}
+
+/// 默认数据目录:`~/.telesh`;没有主目录时用当前目录下的 `.telesh`。
 pub fn default_dataroot() -> PathBuf {
-    match std::env::var("HOME") {
-        Ok(home) => PathBuf::from(home).join(".telesh"),
-        Err(_) => PathBuf::from(".telesh"),
+    match home_dir() {
+        Some(home) => home.join(".telesh"),
+        None => PathBuf::from(".telesh"),
     }
 }
 
@@ -165,21 +177,20 @@ pub fn save(path: &Path, state: &AgentState) -> Result<()> {
     text.push('\n');
     text.push_str(state.name.as_deref().unwrap_or(""));
     text.push('\n');
-    std::fs::write(path, text).with_context(|| format!("cannot persist state to {}", path.display()))
+    std::fs::write(path, text)
+        .with_context(|| format!("cannot persist state to {}", path.display()))
 }
 
 /// Friendly default node name (LocalSend-style: adjective + animal).
 fn random_name() -> String {
     use rand::Rng;
     const ADJECTIVES: &[&str] = &[
-        "Brave", "Calm", "Clever", "Happy", "Swift", "Bright", "Quiet", "Bold", "Gentle",
-        "Lucky", "Cosmic", "Silver", "Golden", "Silent", "Wild", "Warm", "Cool", "Merry",
-        "Noble", "Sunny",
+        "Brave", "Calm", "Clever", "Happy", "Swift", "Bright", "Quiet", "Bold", "Gentle", "Lucky",
+        "Cosmic", "Silver", "Golden", "Silent", "Wild", "Warm", "Cool", "Merry", "Noble", "Sunny",
     ];
     const ANIMALS: &[&str] = &[
-        "Otter", "Panda", "Fox", "Falcon", "Dolphin", "Tiger", "Heron", "Lynx", "Koala",
-        "Raven", "Bison", "Crane", "Moth", "Puma", "Robin", "Seal", "Whale", "Wolf", "Wren",
-        "Yak",
+        "Otter", "Panda", "Fox", "Falcon", "Dolphin", "Tiger", "Heron", "Lynx", "Koala", "Raven",
+        "Bison", "Crane", "Moth", "Puma", "Robin", "Seal", "Whale", "Wolf", "Wren", "Yak",
     ];
     let mut rng = rand::thread_rng();
     format!(

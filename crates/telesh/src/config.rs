@@ -79,7 +79,7 @@ pub fn file_path(dataroot: &Path) -> PathBuf {
 /// `--dataroot "~/telesh"` 要落到 `/home/you/telesh`,而不是在当前目录下建一个
 /// 叫 `~` 的目录。没有 `HOME` 时原样返回。
 pub fn expand_tilde(path: &Path) -> PathBuf {
-    let Ok(home) = std::env::var("HOME") else {
+    let Some(home) = crate::state::home_dir() else {
         return path.to_path_buf();
     };
     let mut comps = path.components();
@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn expands_a_leading_tilde() {
-        let home = PathBuf::from(std::env::var("HOME").expect("HOME is set in tests"));
+        let home = crate::state::home_dir().expect("home dir is set in tests");
         assert_eq!(expand_tilde(Path::new("~/telesh")), home.join("telesh"));
         assert_eq!(expand_tilde(Path::new("~")), home);
         assert_eq!(

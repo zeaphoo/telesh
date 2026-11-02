@@ -193,9 +193,22 @@ impl Config {
     }
 }
 
+/// 用户主目录:Unix 用 `HOME`,Windows 用 `USERPROFILE`。
+fn home_dir() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("HOME") {
+        return Some(PathBuf::from(home));
+    }
+    #[cfg(windows)]
+    if let Some(home) = std::env::var_os("USERPROFILE") {
+        return Some(PathBuf::from(home));
+    }
+    None
+}
+
 fn default_dataroot() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".telesh")
+    home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".telesh")
 }
 
 pub static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -213,7 +226,7 @@ pub fn config() -> &'static Config {
 /// 配置文件里写 `dataroot = "~/telesh"` 时,要落到 `/home/you/telesh`,
 /// 而不是在当前目录下建一个叫 `~` 的目录。没有 `HOME` 时原样返回。
 pub fn expand_tilde(path: &Path) -> PathBuf {
-    let Ok(home) = std::env::var("HOME") else {
+    let Some(home) = home_dir() else {
         return path.to_path_buf();
     };
     let mut comps = path.components();
@@ -237,11 +250,17 @@ mod tests {
     /// `~` 要展开成主目录,别的地方原样保留。
     #[test]
     fn expands_a_leading_tilde() {
-        let home = PathBuf::from(std::env::var("HOME").expect("HOME is set in tests"));
+        let home = home_dir().expect("home dir is set in tests");
         assert_eq!(expand_tilde(Path::new("~/telesh")), home.join("telesh"));
         assert_eq!(expand_tilde(Path::new("~")), home);
-        assert_eq!(expand_tilde(Path::new("/var/lib/telesh")), PathBuf::from("/var/lib/telesh"));
-        assert_eq!(expand_tilde(Path::new("rel/acme")), PathBuf::from("rel/acme"));
+        assert_eq!(
+            expand_tilde(Path::new("/var/lib/telesh")),
+            PathBuf::from("/var/lib/telesh")
+        );
+        assert_eq!(
+            expand_tilde(Path::new("rel/acme")),
+            PathBuf::from("rel/acme")
+        );
         // `~user` 不处理(拿不到别人的主目录)。
         assert_eq!(expand_tilde(Path::new("~root/x")), PathBuf::from("~root/x"));
     }
@@ -249,22 +268,18 @@ mod tests {
     /// 配置里的相对/`~` 路径要被展开。
     #[test]
     fn config_paths_are_expanded() {
-        let home = std::env::var("HOME").unwrap();
-        let cfg: Config = toml::from_str(
-            "dataroot = \"~/telesh\"\n[relay]\ntls_cert = \"~/relay.crt\"\n",
-        )
-        .unwrap();
+        let home = home_dir().expect("home dir is set in tests");
+        let cfg: Config =
+            toml::from_str("dataroot = \"~/telesh\"\n[relay]\ntls_cert = \"~/relay.crt\"\n")
+                .unwrap();
         let cfg = {
             let mut c = cfg;
             c.dataroot = expand_tilde(&c.dataroot);
             c.relay.tls_cert = c.relay.tls_cert.as_deref().map(expand_tilde);
             c
         };
-        assert_eq!(cfg.dataroot, PathBuf::from(&home).join("telesh"));
-        assert_eq!(
-            cfg.relay.tls_cert.unwrap(),
-            PathBuf::from(&home).join("relay.crt")
-        );
+        assert_eq!(cfg.dataroot, home.join("telesh"));
+        assert_eq!(cfg.relay.tls_cert.unwrap(), home.join("relay.crt"));
     }
 
     /// 示例配置文件必须能解析:字段名或取值写错会在这里炸。
