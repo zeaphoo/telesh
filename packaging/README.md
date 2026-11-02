@@ -192,5 +192,8 @@ journalctl -u telesh-server -f
   `telesh-server-app.exe + telesh-server-sidecar.exe`）装到同一目录；便携 zip 直接把两个 exe 放在一起。未做代码签名，SmartScreen 可能提示
   「未知发布者」。MSI 的 `ProductVersion` 只接受数字，预发布版本会把第一个数字
   映射到 build 段（`0.1.0-rc.1` → `0.1.0.1`）。
-- macOS：dmg 内是 Tauri 生成的 `.app`，sidecar 在 `Contents/MacOS/`。
+- macOS：dmg 内是 Tauri 产出并已签名/公证的 `.app`，sidecar 在
+  `Contents/MacOS/`。`.app` 由 Tauri 负责签名与钉票，DMG 由
+  `scripts/package-mac.sh` 用 `hdiutil` 组装（带 Applications 链接与重试），
+  避开 Tauri `bundle_dmg.sh` 在 CI 上偶发的 `Resource busy`。
   已签名时会做 `codesign --verify --deep --strict` 自检。
