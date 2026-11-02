@@ -312,6 +312,22 @@ jobs:
           ls -lh release
       - name: Extract release notes from CHANGELOG
         run: ./scripts/release-notes.sh "${{ needs.verify.outputs.version }}" > release-notes.md
+      # 上一轮失败/重跑可能留下同 tag 的 draft 或空 release，softprops 在
+      # finalize 时会报 already_exists。发布前统一删掉，保证重跑幂等。
+      - name: Remove existing release for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          existing="$(
+            gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq ".[] | select(.tag_name == \"$TAG\") | .id"
+          )"
+          for id in $existing; do
+            echo "Deleting existing release $id for $TAG"
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+          done
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:

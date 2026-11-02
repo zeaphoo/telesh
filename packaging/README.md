@@ -63,7 +63,8 @@ git tag v0.1.0 && git push origin v0.1.0
 ```
 
 Release 正文来自 `CHANGELOG.md` 对应版本段（`scripts/release-notes.sh` 抽取）；
-`verify` 阶段会先检查该版本条目存在，缺条目直接失败。只想演练而不发 Release：
+`verify` 阶段会先检查该版本条目存在，缺条目直接失败。发布前会删除同 tag 的
+旧 release（含失败重跑留下的 draft），因此重跑 Release 工作流是幂等的。只想演练而不发 Release：
 手动触发 `Release` 工作流，`publish=false`（可选 `with_mac=false`）。
 
 CI 的构建机固定为 `ubuntu-22.04` / `windows-2022` / `macos-15`(+`macos-15-intel`)，
