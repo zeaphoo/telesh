@@ -47,6 +47,8 @@ sidecar 文件名特意用 `telesh-sidecar` / `telesh-server-sidecar`：Linux de
 
 RPM 的 `Version` 不允许 `-`（semver 预发布必须带），`scripts/package-linux.sh`
 会把它映射成 `~`（`0.1.0-rc.1` → `0.1.0~rc.1`），排序仍低于正式版。
+GitHub Release 会把资产名里的 `~` 规范成 `.`；workflow 在上传前主动做同样
+规范化，保证重新发布时能按同名覆盖。
 
 流程：
 

@@ -300,6 +300,15 @@ jobs:
                -o -name '*.dmg' -o -name '*.exe' -o -name '*.msi' \
                -o -name '*.zip' -o -name '*.tar.gz' \) \
             -exec cp -v {} release/ \;
+          # GitHub 会把资产名里的 `~` 规范成 `.`（deb/rpm 的预发布版本号）。
+          # 上传前自己做同样规范化，重复发布时才能按同名覆盖，而不是 422 重试。
+          shopt -s nullglob
+          for file in release/*; do
+            [[ -f "$file" ]] || continue
+            base="$(basename "$file")"
+            safe="${base//\~/.}"
+            [[ "$safe" == "$base" ]] || mv -f "$file" "release/$safe"
+          done
           ls -lh release
       - name: Extract release notes from CHANGELOG
         run: ./scripts/release-notes.sh "${{ needs.verify.outputs.version }}" > release-notes.md
