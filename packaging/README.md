@@ -54,13 +54,15 @@ RPM 的 `Version` 不允许 `-`（semver 预发布必须带），`scripts/packag
 # 1) 版本一致性（根 Cargo.toml / 两个 app 的 Cargo.toml + tauri.conf.json /
 #    两个前端 package.json 必须一致）
 ./scripts/check-release-version.sh
-# 2) 打 tag 并推送（tag 必须等于 v<version>）
+# 2) 在 CHANGELOG.md 写 `## [<version>] - <date>`，并预览 Release 正文
+./scripts/release-notes.sh 0.1.0
+# 3) 打 tag 并推送（tag 必须等于 v<version>）
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
-Release 正文由 GitHub 自动生成（`generate_release_notes: true`），不额外维护
-`CHANGELOG.md`。只想演练而不发 Release：手动触发 `Release` 工作流，
-`publish=false`（可选 `with_mac=false`）。
+Release 正文来自 `CHANGELOG.md` 对应版本段（`scripts/release-notes.sh` 抽取）；
+`verify` 阶段会先检查该版本条目存在，缺条目直接失败。只想演练而不发 Release：
+手动触发 `Release` 工作流，`publish=false`（可选 `with_mac=false`）。
 
 CI 的构建机固定为 `ubuntu-22.04` / `windows-2022` / `macos-15`(+`macos-15-intel`)，
 不使用 `-latest`：二进制动态链接 glibc，构建机版本决定产物的 glibc 下限

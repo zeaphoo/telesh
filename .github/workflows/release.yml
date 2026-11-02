@@ -57,6 +57,8 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "release version: $version"
+      - name: Check CHANGELOG has this version
+        run: ./scripts/release-notes.sh "${{ steps.version.outputs.version }}" > /dev/null
 
   linux-service:
     name: linux service packages (deb/rpm)
@@ -299,12 +301,14 @@ jobs:
                -o -name '*.zip' -o -name '*.tar.gz' \) \
             -exec cp -v {} release/ \;
           ls -lh release
+      - name: Extract release notes from CHANGELOG
+        run: ./scripts/release-notes.sh "${{ needs.verify.outputs.version }}" > release-notes.md
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
           name: ${{ format('telesh v{0}', needs.verify.outputs.version) }}
-          generate_release_notes: true
+          body_path: release-notes.md
           prerelease: ${{ contains(needs.verify.outputs.version, '-') }}
           fail_on_unmatched_files: true
           files: release/*

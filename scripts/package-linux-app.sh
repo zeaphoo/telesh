@@ -94,6 +94,12 @@ build_app() {
         work="$(mktemp -d)"
         dpkg-deb -R "$file" "$work"
         sed -i "s/^Package: .*/Package: ${pkg}/" "$work/DEBIAN/control"
+        # Debian 用 `~` 表达预发布，保证 0.1.0~rc.1 < 0.1.0；与 cargo-deb 的
+        # 服务包保持一致（Tauri 会原样保留 -rc.1）。
+        if [[ "$deb_version" == *-* ]]; then
+            deb_version="${deb_version/-/\~}"
+            sed -i "s/^Version: .*/Version: ${deb_version}/" "$work/DEBIAN/control"
+        fi
         out="$DIST_DIR/${pkg}_${deb_version}_linux_${deb_arch}.deb"
         dpkg-deb --root-owner-group -b "$work" "$out" >/dev/null
         rm -rf "$work"
