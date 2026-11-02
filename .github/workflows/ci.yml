@@ -87,6 +87,38 @@ jobs:
       - name: cargo check server-app
         run: cargo check --manifest-path server-app/src-tauri/Cargo.toml
 
+  cli:
+    name: cli archives (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}-cli
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: |
+            agent-ui/pnpm-lock.yaml
+            server-ui/pnpm-lock.yaml
+      - name: Build CLI archives
+        shell: bash
+        run: ./scripts/package-cli.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-cli-${{ matrix.os }}
+          path: dist/cli/*
+          if-no-files-found: error
+
   linux-packages:
     name: linux packages (deb/rpm)
     runs-on: ubuntu-22.04

@@ -1,0 +1,29 @@
+# telesh-server 独立命令行工具配置示例。
+#
+# 用法:
+#     telesh-server server.toml
+#
+# 字段都可以省略;省略即用注释里的默认值。路径支持 `~`。
+
+# 数据根目录:server.sqlite、ACME 缓存等都放这里。
+dataroot = "~/.telesh-server"
+
+# 控制面 + dashboard 共用的监听地址。
+control_addr = "0.0.0.0:9009"
+
+# 边缘入口:公网 HTTP / TCP 从这里进来。
+ingress_addr = "0.0.0.0:8080"
+
+# 数据面:agent 主动连这里。
+data_addr = "0.0.0.0:9008"
+
+# 拼隧道 URL 用的公网后缀;本地测试可留空。
+public_host = ""
+
+# TCP 隧道的端口范围。
+tcp_port_range = "18000-18100"
+
+# 内嵌 iroh 中继(默认不跑):
+# [relay]
+# serve = "0.0.0.0:8081"
+# url = "https://relay.example.com"

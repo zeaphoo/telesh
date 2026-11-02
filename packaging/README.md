@@ -6,6 +6,7 @@
 |---|---|---|---|
 | agent（headless） | `telesh` | `agent-ui/dist` 经 **rust-embed** 编进二进制 | Linux `deb` / `rpm`（systemd） |
 | server（headless） | `telesh-server` | `server-ui/dist` 经 **rust-embed** 编进二进制 | Linux `deb` / `rpm`（systemd） |
+| 独立命令行工具 | `telesh` / `telesh-server` | 各自 headless 二进制已嵌入前端 | Linux/macOS `tar.gz`、Windows `zip` |
 | agent 桌面客户端 | `telesh-app` | 随包 sidecar `telesh-sidecar`（其内部已嵌入前端） | Linux `deb`/`AppImage`、Windows `NSIS`/`MSI`/便携 `zip`、macOS `dmg` |
 | server 桌面客户端 | `telesh-server-app` | 随包 sidecar `telesh-server-sidecar`（其内部已嵌入前端） | 同上 |
 
@@ -30,6 +31,7 @@ sidecar 文件名特意用 `telesh-sidecar` / `telesh-server-sidecar`：Linux de
 
 | 平台 | 产物 | 构建脚本 |
 |---|---|---|
+| 命令行工具（全平台） | `telesh_<ver>_<os>_<arch>.tar.gz` / `.zip`；server 同名规则 | `scripts/package-cli.sh` |
 | Linux 服务（agent） | `telesh_<ver>-1_linux_<arch>.deb`、`telesh-<ver>-1.linux.<arch>.rpm` | `scripts/package-linux.sh` |
 | Linux 服务（server） | `telesh-server_<ver>-1_linux_<arch>.deb`、`telesh-server-<ver>-1.linux.<arch>.rpm` | `scripts/package-linux.sh` |
 | Linux 客户端（agent） | `telesh-agent-app_<ver>_linux_<arch>.deb`、`.AppImage` | `scripts/package-linux-app.sh` |
@@ -70,6 +72,9 @@ CI 的构建机固定为 `ubuntu-22.04` / `windows-2022` / `macos-15`(+`macos-15
 前置：Rust、Node 22 / pnpm 10；Tauri 客户端还需要 `cargo install tauri-cli --locked`。
 
 ```bash
+# 独立命令行工具包（Linux/macOS tar.gz、Windows zip；不依赖 Tauri）
+./scripts/package-cli.sh              # 输出 dist/cli/
+
 # headless deb + rpm（agent + server）
 cargo install cargo-deb --locked
 cargo install cargo-generate-rpm --locked
@@ -110,6 +115,30 @@ Tauri 的 `APPLE_*` 变量，由 Tauri 完成临时钥匙串导入、hardened ru
 | `MAC_NOTARY_API_KEY_P8_BASE64` | API key 的 `.p8` 私钥（base64） |
 
 `.p8` 只在构建时落到临时文件、用后即删，真实凭据不入仓库。
+
+## 独立命令行工具包
+
+`scripts/package-cli.sh` 不依赖 Tauri/GUI 栈，只编译 `telesh` 与 `telesh-server`
+并打成压缩包；Linux/macOS 为 `tar.gz`，Windows 为 `zip`。每个包内只有：
+
+- `telesh[.exe]` 或 `telesh-server[.exe]`
+- `config.toml.example` / `server.toml.example`
+- `LICENSE`
+- `README.txt`
+
+前端已经在编译期嵌入二进制，解压即可运行，不需要 Node 或单独的 `dist/` 目录。
+
+```bash
+tar -xzf telesh_0.1.0_linux_amd64.tar.gz
+cd telesh_0.1.0_linux_amd64
+./telesh --dataroot ./data
+# 或
+tar -xzf telesh-server_0.1.0_macos_arm64.tar.gz
+cd telesh-server_0.1.0_macos_arm64
+./telesh-server server.toml
+```
+
+Windows 解压 zip 后直接运行 `telesh.exe` / `telesh-server.exe`。
 
 ## Linux 服务包
 
