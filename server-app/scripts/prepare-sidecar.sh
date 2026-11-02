@@ -3,8 +3,11 @@
 #
 # Tauri 要求 externalBin 的文件名带 target triple 后缀,而且路径相对 tauri.conf.json
 # (即 src-tauri/),所以产物落在 src-tauri/binaries/:
-#   src-tauri/binaries/telesh-server-x86_64-unknown-linux-gnu
+#   src-tauri/binaries/telesh-server-sidecar-x86_64-unknown-linux-gnu
 # 打包时 Tauri 会去掉后缀,放在 app 二进制旁边(server.rs 的 find_binary 会去找它)。
+#
+# 名字用 telesh-server-sidecar:Linux 的 deb 会把 externalBin 装到 /usr/bin/,
+# 若同名会与 headless 服务包 telesh-server 的文件冲突。
 #
 # 用法:
 #   scripts/prepare-sidecar.sh            # release
@@ -35,5 +38,5 @@ else
 fi
 
 mkdir -p "$app/src-tauri/binaries"
-install -m 0755 "$built" "$app/src-tauri/binaries/telesh-server-$triple$ext"
-echo "sidecar 就绪: server-app/src-tauri/binaries/telesh-server-$triple$ext"
+install -m 0755 "$built" "$app/src-tauri/binaries/telesh-server-sidecar-$triple$ext"
+echo "sidecar 就绪: server-app/src-tauri/binaries/telesh-server-sidecar-$triple$ext"

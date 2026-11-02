@@ -1,0 +1,26 @@
+#!/bin/sh
+set -e
+
+if ! getent group telesh-server >/dev/null; then
+    addgroup --system --quiet telesh-server
+fi
+if ! getent passwd telesh-server >/dev/null; then
+    adduser --system --quiet --ingroup telesh-server \
+        --home /var/lib/telesh-server \
+        --no-create-home \
+        --disabled-login \
+        --shell /usr/sbin/nologin \
+        telesh-server
+fi
+
+install -d -o telesh-server -g telesh-server -m 0750 /var/lib/telesh-server
+install -d -m 0755 /etc/telesh
+
+# 首次安装给一份可编辑的配置；升级时绝不覆盖用户改过的文件。
+if [ ! -e /etc/telesh/server.toml ] && [ -f /usr/share/telesh-server/server.toml.example ]; then
+    install -m 0644 /usr/share/telesh-server/server.toml.example /etc/telesh/server.toml
+fi
+
+#DEBHELPER#
+
+exit 0

@@ -305,8 +305,16 @@ tcp_port_range = "18000-18100"
 
 /// 找 sidecar:先看 `TELESH_SERVER_BIN`,再看 app 同目录(打包后的布局),最后
 /// 是开发时的 `target/{debug,release}`。
+///
+/// 打包用的文件名是 `telesh-server-sidecar`(externalBin),避免 Linux deb 把它
+/// 装成 `/usr/bin/telesh-server` 与 headless 服务包冲突;旧名字保留兼容。
 fn find_binary() -> Option<PathBuf> {
     let ext = if cfg!(windows) { ".exe" } else { "" };
+    let bundled = format!("telesh-server-sidecar{ext}");
+    let bundled_triple = format!(
+        "telesh-server-sidecar-{}{ext}",
+        env!("TELESH_TARGET_TRIPLE")
+    );
     let plain = format!("telesh-server{ext}");
     let triple = format!("telesh-server-{}{ext}", env!("TELESH_TARGET_TRIPLE"));
 
@@ -319,9 +327,12 @@ fn find_binary() -> Option<PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             // 打包后:Tauri 把 externalBin 放在 app 二进制旁边。
+            candidates.push(dir.join(&bundled));
+            candidates.push(dir.join(&bundled_triple));
             candidates.push(dir.join(&plain));
             candidates.push(dir.join(&triple));
             // macOS .app 的另一种摆法:Contents/Resources/。
+            candidates.push(dir.join("../Resources").join(&bundled));
             candidates.push(dir.join("../Resources").join(&plain));
         }
     }

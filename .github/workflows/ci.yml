@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '10'
+
+jobs:
+  rust:
+    name: rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+      # 干净检出没有 *-ui/dist：debug 构建允许缺失（面板 404），release 才强制
+      # 要求前端存在（build.rs 闸门）。所以这里只跑 debug 测试。
+      - run: cargo test --workspace --locked
+
+  ui:
+    name: ui build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: |
+            agent-ui/pnpm-lock.yaml
+            server-ui/pnpm-lock.yaml
+      - name: Build both frontends
+        run: ./scripts/build-ui.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-dist
+          path: |
+            agent-ui/dist
+            server-ui/dist
+          if-no-files-found: error
+
+  windows-app-check:
+    name: windows app check
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-2022-app
+          workspaces: |
+            agent-app/src-tauri -> target
+            server-app/src-tauri -> target
+      # 桌面壳是独立 Tauri 项目（不在根 workspace）；正式打包在 release.yml。
+      # tauri-build 会校验 externalBin 路径存在，干净检出只有一个 .gitkeep，
+      # 所以先放两个空文件占位（check 不关心内容，只关心路径）。
+      - name: Stub sidecar paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          triple="$(rustc -vV | awk '/^host:/ { print $2 }')"
+          mkdir -p agent-app/src-tauri/binaries server-app/src-tauri/binaries
+          : > "agent-app/src-tauri/binaries/telesh-sidecar-$triple.exe"
+          : > "server-app/src-tauri/binaries/telesh-server-sidecar-$triple.exe"
+      - name: cargo check agent-app
+        run: cargo check --manifest-path agent-app/src-tauri/Cargo.toml
+      - name: cargo check server-app
+        run: cargo check --manifest-path server-app/src-tauri/Cargo.toml
+
+  linux-packages:
+    name: linux packages (deb/rpm)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ubuntu-22.04-packages
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: |
+            agent-ui/pnpm-lock.yaml
+            server-ui/pnpm-lock.yaml
+      - name: Install packaging tools
+        run: |
+          cargo install cargo-deb --locked
+          cargo install cargo-generate-rpm --locked
+      - name: Build headless packages
+        run: ./scripts/package-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-linux-service
+          path: |
+            dist/linux/*.deb
+            dist/linux/*.rpm
+          if-no-files-found: error

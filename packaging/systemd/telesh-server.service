@@ -1,0 +1,42 @@
+[Unit]
+Description=telesh tunnel control server
+Documentation=https://github.com/zeaphoo/telesh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=telesh-server
+Group=telesh-server
+WorkingDirectory=/var/lib/telesh-server
+StateDirectory=telesh-server
+StateDirectoryMode=0750
+ExecStart=/usr/bin/telesh-server /etc/telesh/server.toml
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+UMask=0077
+LimitNOFILE=65536
+
+# 支持把 ingress / relay 配到 80/443；不需要低端口时可以删掉这三行。
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+
+# 基础收敛：只允许写数据目录。证书/数据库/ACME 缓存都在这里。
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/telesh-server
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+SyslogIdentifier=telesh-server
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

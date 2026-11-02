@@ -33,3 +33,50 @@ serde = { workspace = true }
 serde_json = "1"
 # agent 配置文件(<dataroot>/config.toml)。
 toml = "0.8"
+# ---------------------------------------------------------------------------
+# Linux 服务包（deb/rpm）：systemd 单元 + /usr/bin/telesh。
+#
+# 前端（agent-ui/dist）在编译期通过 rust-embed 嵌进二进制，包里只有可执行文件
+# 和配置样例，没有散落的 web 资源。打包脚本：scripts/package-linux.sh。
+# 单元默认不 enable/start：agent 需要先配置 control_server，桌面场景请用
+# agent-app（或用户自己的 systemd --user 单元）。
+# ---------------------------------------------------------------------------
+
+[package.metadata.deb]
+maintainer = "telesh contributors <zeaphoo@qq.com>"
+copyright = "2026, telesh contributors"
+section = "net"
+priority = "optional"
+depends = "$auto, ca-certificates, adduser"
+recommends = "systemd"
+extended-description = """\
+telesh is a self-hosted tunneling agent. It exposes local TCP/HTTP ports \
+through a telesh control server, with QUIC hole punching / relay fallback and \
+an embedded local inspector dashboard.
+
+This package installs the headless agent, a systemd unit, and an example \
+configuration. The dashboard assets are embedded in the binary."""
+assets = [
+    ["target/release/telesh", "usr/bin/", "755"],
+    ["../../packaging/deb/copyright", "usr/share/doc/telesh/copyright", "644"],
+    ["../../crates/telesh/config.toml.example", "usr/share/telesh/config.toml.example", "644"],
+]
+maintainer-scripts = "../../packaging/deb/telesh"
+systemd-units = { unit-name = "telesh", unit-scripts = "../../packaging/systemd", enable = false, start = false }
+
+[package.metadata.generate-rpm]
+summary = "telesh tunnel agent (headless)"
+license = "Apache-2.0"
+url = "https://github.com/zeaphoo/telesh"
+assets = [
+    { source = "target/release/telesh", dest = "/usr/bin/telesh", mode = "755" },
+    { source = "../../packaging/systemd/telesh.service", dest = "/usr/lib/systemd/system/telesh.service", mode = "644" },
+    { source = "../../crates/telesh/config.toml.example", dest = "/usr/share/telesh/config.toml.example", mode = "644" },
+    { source = "../../packaging/deb/copyright", dest = "/usr/share/doc/telesh/copyright", mode = "644" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/telesh/LICENSE", mode = "644" },
+]
+pre_install_script = "../../packaging/rpm/telesh-pre_install.sh"
+post_install_script = "../../packaging/rpm/telesh-post_install.sh"
+pre_uninstall_script = "../../packaging/rpm/telesh-pre_uninstall.sh"
+post_uninstall_script = "../../packaging/rpm/telesh-post_uninstall.sh"
+requires = { "ca-certificates" = "*", "shadow-utils" = "*", "systemd" = "*" }

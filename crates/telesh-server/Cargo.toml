@@ -42,3 +42,48 @@ serde_json = "1"
 [dependencies.axum]
 workspace = true
 features = ["ws", "tokio"]
+# ---------------------------------------------------------------------------
+# Linux 服务包（deb/rpm）：systemd 单元 + /usr/bin/telesh-server。
+#
+# dashboard（server-ui/dist）在编译期通过 rust-embed 嵌进二进制；包内只有
+# 可执行文件、单元和配置样例。打包脚本：scripts/package-linux.sh。
+# ---------------------------------------------------------------------------
+
+[package.metadata.deb]
+maintainer = "telesh contributors <zeaphoo@qq.com>"
+copyright = "2026, telesh contributors"
+section = "net"
+priority = "optional"
+depends = "$auto, ca-certificates, adduser"
+recommends = "systemd"
+extended-description = """\
+telesh-server is the control plane and edge ingress for telesh tunnels. It \
+provides agent registration, HTTP/TCP ingress, an embedded dashboard, metrics, \
+and an optional in-process iroh relay.
+
+This package installs the headless server and a systemd unit. The dashboard \
+assets are embedded in the binary."""
+assets = [
+    ["target/release/telesh-server", "usr/bin/", "755"],
+    ["../../packaging/deb/copyright", "usr/share/doc/telesh-server/copyright", "644"],
+    ["../../packaging/server.toml.example", "usr/share/telesh-server/server.toml.example", "644"],
+]
+maintainer-scripts = "../../packaging/deb/telesh-server"
+systemd-units = { unit-name = "telesh-server", unit-scripts = "../../packaging/systemd", enable = true, start = true }
+
+[package.metadata.generate-rpm]
+summary = "telesh tunnel control server and edge ingress"
+license = "Apache-2.0"
+url = "https://github.com/zeaphoo/telesh"
+assets = [
+    { source = "target/release/telesh-server", dest = "/usr/bin/telesh-server", mode = "755" },
+    { source = "../../packaging/systemd/telesh-server.service", dest = "/usr/lib/systemd/system/telesh-server.service", mode = "644" },
+    { source = "../../packaging/server.toml.example", dest = "/usr/share/telesh-server/server.toml.example", mode = "644" },
+    { source = "../../packaging/deb/copyright", dest = "/usr/share/doc/telesh-server/copyright", mode = "644" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/telesh-server/LICENSE", mode = "644" },
+]
+pre_install_script = "../../packaging/rpm/telesh-server-pre_install.sh"
+post_install_script = "../../packaging/rpm/telesh-server-post_install.sh"
+pre_uninstall_script = "../../packaging/rpm/telesh-server-pre_uninstall.sh"
+post_uninstall_script = "../../packaging/rpm/telesh-server-post_uninstall.sh"
+requires = { "ca-certificates" = "*", "shadow-utils" = "*", "systemd" = "*" }

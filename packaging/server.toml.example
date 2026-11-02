@@ -1,0 +1,17 @@
+# telesh-server 打包默认配置。deb/rpm 首次安装时复制到 /etc/telesh/server.toml，
+# 已存在则不覆盖。完整字段说明见 crates/telesh-server/server.toml.example。
+
+dataroot = "/var/lib/telesh-server"
+control_addr = "0.0.0.0:9009"
+ingress_addr = "0.0.0.0:8080"
+data_addr = "0.0.0.0:9008"
+
+# 拼隧道 URL 用的公网后缀；部署前改成自己的域名。
+public_host = "example.com"
+
+# TCP 隧道端口范围。
+tcp_port_range = "18000-18100"
+
+# [relay]
+# serve = "0.0.0.0:8081"
+# url = "https://relay.example.com"

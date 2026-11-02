@@ -178,8 +178,13 @@ fn wait_ready() -> Outcome {
 
 /// 找 sidecar:先看 `TELESH_BIN`,再看 app 同目录(打包后的布局),最后是开发时
 /// 的 `target/{debug,release}`。
+///
+/// 打包用的文件名是 `telesh-sidecar`(externalBin),避免 Linux deb 把它装成
+/// `/usr/bin/telesh` 与 headless 服务包冲突;`telesh` 保留为兼容旧包/开发布局。
 fn find_binary() -> Option<PathBuf> {
     let ext = if cfg!(windows) { ".exe" } else { "" };
+    let bundled = format!("telesh-sidecar{ext}");
+    let bundled_triple = format!("telesh-sidecar-{}{ext}", env!("TELESH_TARGET_TRIPLE"));
     let plain = format!("telesh{ext}");
     let triple = format!("telesh-{}{ext}", env!("TELESH_TARGET_TRIPLE"));
 
@@ -192,9 +197,12 @@ fn find_binary() -> Option<PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             // 打包后:Tauri 把 externalBin 放在 app 二进制旁边(triple 后缀已去掉)。
+            candidates.push(dir.join(&bundled));
+            candidates.push(dir.join(&bundled_triple));
             candidates.push(dir.join(&plain));
             candidates.push(dir.join(&triple));
             // macOS .app 的另一种摆法:Contents/Resources/。
+            candidates.push(dir.join("../Resources").join(&bundled));
             candidates.push(dir.join("../Resources").join(&plain));
         }
     }

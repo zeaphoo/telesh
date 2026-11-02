@@ -1,0 +1,39 @@
+[Unit]
+Description=telesh tunnel agent
+Documentation=https://github.com/zeaphoo/telesh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=telesh
+Group=telesh
+WorkingDirectory=/var/lib/telesh
+StateDirectory=telesh
+StateDirectoryMode=0750
+# 配置和数据都在 dataroot 里：/var/lib/telesh/config.toml
+ExecStart=/usr/bin/telesh --dataroot /var/lib/telesh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+UMask=0077
+LimitNOFILE=65536
+
+# 基础收敛：只允许写数据目录。
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/telesh
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# AF_NETLINK：iroh/端口发现需要枚举本机网卡。
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+SyslogIdentifier=telesh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
