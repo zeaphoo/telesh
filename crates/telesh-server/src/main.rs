@@ -1,11 +1,14 @@
 //! telesh-server binary entrypoint.
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use telesh_server::{config, control, dashboard, data, ingress, state, Cli, Config};
+use telesh_server::{
+    admin, config, control, dashboard, data, ingress, state, Cli, Command, Config,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -16,9 +19,18 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    // 命令行只有一个参数:配置文件路径。
+    // 没有子命令 = 前台跑 server(兼容 `telesh-server /path/server.toml`)。
+    // 有子命令则是本地运维/配置入口,不启动服务。
     let cli = Cli::parse();
-    let cfg = Config::load(&cli.config)?;
+    let config_path = cli.config_path();
+    match cli.command {
+        None | Some(Command::Serve) => run_server(config_path).await,
+        Some(command) => admin::run(command, config_path, cli.json).await,
+    }
+}
+
+async fn run_server(config_path: PathBuf) -> anyhow::Result<()> {
+    let cfg = Config::load(&config_path)?;
     let relay_url = cfg.advertised_relay_url();
     cfg.log_summary();
     config::init(cfg.clone());

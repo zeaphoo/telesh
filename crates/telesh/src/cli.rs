@@ -7,13 +7,18 @@
 //! 这些命令不是旧版「一隧道一进程」的子命令:它们只是把条目写进 daemon 的
 //! desired state(`PUT /api/publish`),由常驻 agent 统一 reconcile。
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 
+use crate::account::AccountInfo;
 use crate::cli_client::AgentClient;
+use crate::inspect::RequestRecord;
+use crate::instance::{humanize, Instance};
+use crate::ports::PortInfo;
 use crate::publish::{Entry, EntryStatus, P2pMode, P2pPolicy, State};
 
 /// 本地发布管理 UI 的默认端口(永远只监听 127.0.0.1)。
@@ -58,6 +63,35 @@ pub enum Command {
         #[arg(long)]
         print_only: bool,
     },
+
+    /// 查看 agent、账户与隧道的整体状态。
+    Status,
+
+    /// 列出本机监听端口,并标出已经发布的方式。
+    Ports,
+
+    /// 查看最近的请求记录;用 `--id` 查看单条请求/响应报文。
+    #[command(visible_alias = "requests")]
+    Logs {
+        /// 只显示某个通道,例如 `publish:8000` / `p2p:5432`。
+        #[arg(short = 'c', long, value_name = "CHANNEL")]
+        channel: Option<String>,
+
+        /// 最多显示多少条(最新在前)。
+        #[arg(short = 'n', long, default_value_t = 30, value_name = "N")]
+        limit: usize,
+
+        /// 查看单条请求的完整请求/响应报文。
+        #[arg(long, value_name = "ID", conflicts_with = "follow")]
+        id: Option<u64>,
+
+        /// 持续输出新请求(类似 `tail -f`)。
+        #[arg(long, conflicts_with = "id")]
+        follow: bool,
+    },
+
+    /// 查看账户、登录状态与会话信息。
+    Account,
 
     /// 把本地端口发布为 HTTP 子域。
     Http {
@@ -167,6 +201,15 @@ pub async fn run(command: Command, ui_port: u16, json: bool) -> Result<()> {
             validate_remote(&remote)?;
             publish(&client, Entry::Mirror { local_port, remote }, json).await
         }
+        Command::Status => show_status(&client, json).await,
+        Command::Ports => show_ports(&client, json).await,
+        Command::Logs {
+            channel,
+            limit,
+            id,
+            follow,
+        } => show_logs(&client, channel, limit, id, follow, json).await,
+        Command::Account => show_account(&client, json).await,
         Command::P2p { ports, all, none } => set_p2p(&client, ports, all, none, json).await,
         Command::Publish { command } => match command {
             PublishCommand::Ls => list(&client, json).await,
@@ -176,6 +219,322 @@ pub async fn run(command: Command, ui_port: u16, json: bool) -> Result<()> {
 }
 
 // ---- 命令实现 -------------------------------------------------------------
+
+/// `status`:一个不需要打开浏览器的「现在怎么样」快照。
+async fn show_status(client: &AgentClient, json: bool) -> Result<()> {
+    let (instance, account, publish) = tokio::try_join!(
+        client.get::<Instance>("/api/instance"),
+        client.get::<AccountInfo>("/api/account"),
+        client.get::<Vec<EntryStatus>>("/api/publish"),
+    )?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "instance": instance,
+                "account": account,
+                "publish": publish,
+            }))?
+        );
+        return Ok(());
+    }
+
+    let live = publish.iter().filter(|s| s.state == State::Live).count();
+    println!(
+        "telesh {}  pid {}  已运行 {}",
+        instance.version,
+        instance.pid,
+        humanize(instance.uptime_secs)
+    );
+    println!("面板        {}", instance.url());
+    println!("控制服务器  {}", dash(&account.control_server));
+
+    let account_id = account.account.as_deref().unwrap_or("—");
+    let display_name = account
+        .display_name
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| format!("  {s}"))
+        .unwrap_or_default();
+    println!(
+        "账户        {} ({}){}",
+        account_id,
+        account_state(&account.state),
+        display_name
+    );
+    if let Some(error) = account.last_error.as_deref() {
+        println!("最近错误    {error}");
+    }
+    println!("通道        {live} live / {} total", publish.len());
+    for status in &publish {
+        println!(
+            "  {:<7} {:<6} {:<11} {}{}",
+            status.entry.kind(),
+            status.entry.local_port(),
+            state_str(status.state),
+            status.detail.as_deref().unwrap_or_else(|| "—"),
+            if status.entry.kind() == "p2p" || status.entry.kind() == "mirror" {
+                format!(" ({})", target_of(&status.entry))
+            } else {
+                String::new()
+            }
+        );
+    }
+    Ok(())
+}
+
+/// `ports`:本机发现了什么,以及它是否已被发布。
+async fn show_ports(client: &AgentClient, json: bool) -> Result<()> {
+    let (ports, publish) = tokio::try_join!(
+        client.get::<Vec<PortInfo>>("/api/ports"),
+        client.get::<Vec<EntryStatus>>("/api/publish"),
+    )?;
+
+    if json {
+        let rows: Vec<_> = ports
+            .iter()
+            .map(|port| {
+                let published: Vec<_> = publish
+                    .iter()
+                    .filter(|s| s.entry.local_port() == port.port)
+                    .map(|s| {
+                        serde_json::json!({
+                            "kind": s.entry.kind(),
+                            "state": state_str(s.state),
+                            "detail": s.detail,
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "port": port.port,
+                    "addr": port.addr,
+                    "pid": port.pid,
+                    "process": port.process,
+                    "http_hint": port.http_hint,
+                    "ssh_hint": port.ssh_hint,
+                    "server": port.server,
+                    "probed": port.probed,
+                    "v6_only": port.v6_only,
+                    "published": published,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
+
+    if ports.is_empty() {
+        println!("没有发现本机监听端口");
+        return Ok(());
+    }
+
+    let mut published: BTreeMap<u16, Vec<String>> = BTreeMap::new();
+    for status in &publish {
+        published
+            .entry(status.entry.local_port())
+            .or_default()
+            .push(format!(
+                "{}:{}",
+                status.entry.kind(),
+                state_str(status.state)
+            ));
+    }
+
+    println!(
+        "{:<6} {:<18} {:<7} {:<16} {:<7} {}",
+        "PORT", "ADDR", "PID", "PROCESS", "PROTO", "PUBLISHED"
+    );
+    for port in ports {
+        let proto = if port.ssh_hint {
+            "ssh"
+        } else if port.http_hint {
+            if port.probed {
+                "http"
+            } else {
+                "http?"
+            }
+        } else {
+            "-"
+        };
+        let published = published
+            .get(&port.port)
+            .map(|v| v.join(", "))
+            .unwrap_or_else(|| "-".to_string());
+        println!(
+            "{:<6} {:<18} {:<7} {:<16} {:<7} {}",
+            port.port,
+            format!("{}:{}", port.addr, port.port),
+            port.pid
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            elide(port.process.as_deref().unwrap_or("-"), 16),
+            proto,
+            published
+        );
+    }
+    Ok(())
+}
+
+/// `account`:登录状态;`--json` 直接给脚本用。
+async fn show_account(client: &AgentClient, json: bool) -> Result<()> {
+    let account: AccountInfo = client.get("/api/account").await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&account)?);
+        return Ok(());
+    }
+
+    println!("状态        {}", account_state(&account.state));
+    println!("账户        {}", account.account.as_deref().unwrap_or("—"));
+    println!(
+        "显示名      {}",
+        account
+            .display_name
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("—")
+    );
+    println!("控制服务器  {}", dash(&account.control_server));
+    println!("数据目录    {}", dash(&account.dataroot));
+    println!("身份公钥    {}", dash(&account.public_key));
+    println!("会话过期    {}", session_expiry(account.session_expires_at));
+    println!("最近登录    {}", since(account.last_login_at));
+    if let Some(error) = account.last_error.as_deref() {
+        println!("最近错误    {error}");
+    }
+    Ok(())
+}
+
+/// `logs` / `logs --follow` / `logs --id`。
+async fn show_logs(
+    client: &AgentClient,
+    channel: Option<String>,
+    limit: usize,
+    id: Option<u64>,
+    follow: bool,
+    json: bool,
+) -> Result<()> {
+    if let Some(id) = id {
+        let record: RequestRecord = client.get(&format!("/api/requests/{id}")).await?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&record)?);
+        } else {
+            println!(
+                "#{}  {} {}  →  {}  ({} ms)",
+                record.id,
+                record.method,
+                record.path,
+                record
+                    .status
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                record.duration_ms
+            );
+            println!(
+                "通道 {}  请求 {} B  响应 {} B",
+                record.channel, record.req_bytes, record.resp_bytes
+            );
+            println!("\n--- 请求 ---\n{}", raw_or_placeholder(&record.payload));
+            println!(
+                "\n--- 响应 ---\n{}",
+                raw_or_placeholder(&record.resp_payload)
+            );
+        }
+        return Ok(());
+    }
+
+    let limit = limit.max(1);
+    if follow {
+        return follow_logs(client, channel.as_deref(), limit.max(100), json).await;
+    }
+
+    let records = fetch_logs(client, channel.as_deref(), limit).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&records)?);
+        return Ok(());
+    }
+    if records.is_empty() {
+        println!("没有请求记录");
+        return Ok(());
+    }
+    print_log_header();
+    for record in &records {
+        print_log_row(record);
+    }
+    Ok(())
+}
+
+async fn fetch_logs(
+    client: &AgentClient,
+    channel: Option<&str>,
+    limit: usize,
+) -> Result<Vec<RequestRecord>> {
+    let mut path = format!("/api/requests?limit={limit}");
+    if let Some(channel) = channel {
+        path.push_str("&channel=");
+        path.push_str(
+            &url::form_urlencoded::byte_serialize(channel.as_bytes()).collect::<String>(),
+        );
+    }
+    Ok(client.get(&path).await?)
+}
+
+async fn follow_logs(
+    client: &AgentClient,
+    channel: Option<&str>,
+    limit: usize,
+    json: bool,
+) -> Result<()> {
+    let mut last_id = 0u64;
+    let mut first = true;
+    if !json {
+        print_log_header();
+    }
+    loop {
+        let records = fetch_logs(client, channel, limit).await?;
+        let mut fresh: Vec<RequestRecord> =
+            records.into_iter().filter(|r| r.id > last_id).collect();
+        // 跟随模式按时间正序输出,和 `tail -f` 一致。
+        fresh.sort_by_key(|r| r.id);
+        for record in &fresh {
+            if json {
+                println!("{}", serde_json::to_string(record)?);
+            } else {
+                print_log_row(record);
+            }
+            last_id = last_id.max(record.id);
+        }
+        if first && !json && fresh.is_empty() {
+            println!("等待新请求…(Ctrl-C 退出)");
+        }
+        first = false;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+fn print_log_header() {
+    println!(
+        "{:<6} {:<12} {:<7} {:<7} {:>6} {:>11} {:<14} {}",
+        "ID", "TIME", "METHOD", "STATUS", "MS", "BYTES", "CHANNEL", "PATH"
+    );
+}
+
+fn print_log_row(record: &RequestRecord) {
+    println!(
+        "{:<6} {:<12} {:<7} {:<7} {:>6} {:>11} {:<14} {}",
+        record.id,
+        elide(&record.started_at, 12),
+        elide(&record.method, 7),
+        record
+            .status
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "-".to_string()),
+        record.duration_ms,
+        format!("{}/{}", record.req_bytes, record.resp_bytes),
+        elide(&record.channel, 14),
+        elide(&record.path, 80)
+    );
+}
 
 async fn publish(client: &AgentClient, entry: Entry, json: bool) -> Result<()> {
     let mut entries = desired(client).await?;
@@ -280,6 +639,73 @@ async fn set_p2p(
         P2pMode::Selected => println!("P2P 入站:允许本地端口 {}", join_ports(&out.ports)),
     }
     Ok(())
+}
+
+// ---- 输出 / 时间小工具 ----------------------------------------------------
+
+fn dash(value: &str) -> &str {
+    if value.trim().is_empty() {
+        "—"
+    } else {
+        value
+    }
+}
+
+fn account_state(state: &str) -> &str {
+    match state {
+        "online" => "已登录",
+        "connecting" => "连接中",
+        _ => "未连接",
+    }
+}
+
+/// 按字符截断,避免把多字节字符切成两半。
+fn elide(value: &str, max: usize) -> String {
+    if value.chars().count() <= max {
+        return value.to_string();
+    }
+    let mut out: String = value.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn session_expiry(timestamp: u64) -> String {
+    if timestamp == 0 {
+        return "—".to_string();
+    }
+    let now = unix_now();
+    if timestamp <= now {
+        "已过期".to_string()
+    } else {
+        format!("{} 后", humanize(timestamp - now))
+    }
+}
+
+fn since(timestamp: u64) -> String {
+    if timestamp == 0 {
+        return "从未".to_string();
+    }
+    let now = unix_now();
+    if timestamp >= now {
+        "刚刚".to_string()
+    } else {
+        format!("{} 前", humanize(now - timestamp))
+    }
+}
+
+fn raw_or_placeholder(raw: &str) -> &str {
+    if raw.is_empty() {
+        "(空)"
+    } else {
+        raw
+    }
 }
 
 // ---- 纯逻辑(单元测试在这里) ----------------------------------------------

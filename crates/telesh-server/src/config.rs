@@ -1,7 +1,8 @@
 //! 服务端配置。
 //!
-//! 命令行只有一个参数:配置文件路径。其余全部从这个 TOML 文件读,字段都
-//! 可以省略(省略即用默认值)。所有需要落盘的数据都在 `dataroot` 下。
+//! 默认从 TOML 文件读;字段都可以省略(省略即用默认值)。用户也可以用
+//! `telesh-server config set/get/unset` 修改,不必手工编辑文件。所有需要
+//! 落盘的数据都在 `dataroot` 下。
 //!
 //! ```toml
 //! dataroot = "/var/lib/telesh"
@@ -20,21 +21,133 @@ use std::str::FromStr;
 use std::sync::OnceLock;
 
 use anyhow::Context;
-use clap::Parser;
-use serde::Deserialize;
+use clap::{Parser, Subcommand};
+use serde::{Deserialize, Serialize};
 
 use crate::relay_config::RelayConfig;
 
-/// 命令行:只有配置文件路径。
+/// 命令行:默认前台跑 server;子命令是本地运维/配置入口。
 #[derive(Debug, Parser)]
 #[command(
     name = "telesh-server",
     version,
-    about = "telesh tunnel server: control plane + edge ingress"
+    about = "telesh tunnel server: control plane + edge ingress",
+    subcommand_precedence_over_arg = true
 )]
 pub struct Cli {
-    /// TOML 配置文件路径。
-    pub config: PathBuf,
+    /// TOML 配置文件路径。默认依次查找 `./server.toml`、`/etc/telesh/server.toml`、
+    /// `~/.telesh/server.toml`。
+    #[arg(short = 'c', long = "config", global = true, value_name = "FILE")]
+    pub config: Option<PathBuf>,
+
+    /// 兼容旧用法:`telesh-server /etc/telesh/server.toml`。
+    #[arg(value_name = "CONFIG", hide = true)]
+    pub legacy_config: Option<PathBuf>,
+
+    /// 以 JSON 输出(用于脚本;适用于运维子命令)。
+    #[arg(long, global = true)]
+    pub json: bool,
+
+    #[command(subcommand)]
+    pub command: Option<Command>,
+}
+
+impl Cli {
+    /// 本次调用使用的配置文件路径(已展开 `~`)。
+    pub fn config_path(&self) -> PathBuf {
+        resolve_config_path(self.config.as_deref().or(self.legacy_config.as_deref()))
+    }
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    /// 前台运行 control server + edge ingress(默认)。
+    Serve,
+
+    /// 查看配置、运行状态和流量摘要。
+    Status,
+
+    /// 列出当前在线的 agent。
+    Clients,
+
+    /// 列出当前活动的 HTTP/TCP 隧道。
+    Tunnels,
+
+    /// 查看服务指标。
+    Metrics {
+        /// 输出 Prometheus 文本格式(给抓取器或 `curl` 用)。
+        #[arg(long)]
+        prometheus: bool,
+    },
+
+    /// 在浏览器里打开 dashboard。
+    Open {
+        /// 只打印 URL,不调起浏览器。
+        #[arg(long)]
+        print_only: bool,
+    },
+
+    /// 查看或修改服务器配置(保留 TOML 注释)。
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConfigCommand {
+    /// 打印配置文件路径。
+    Path,
+
+    /// 打印含默认值的有效配置。
+    Show,
+
+    /// 读取一个配置项,例如 `public_host` / `relay.serve`。
+    Get {
+        #[arg(value_name = "KEY")]
+        key: String,
+    },
+
+    /// 写入一个配置项;写前会做完整校验,不会留下半截配置。
+    Set {
+        #[arg(value_name = "KEY")]
+        key: String,
+        #[arg(value_name = "VALUE")]
+        value: String,
+    },
+
+    /// 删除一个配置项,让它回落到默认值。
+    Unset {
+        #[arg(value_name = "KEY")]
+        key: String,
+    },
+
+    /// 列出所有可配置项。
+    Keys,
+
+    /// 只校验当前配置文件,不启动服务。
+    Validate,
+}
+
+/// 找配置文件:显式参数 → `TELESH_SERVER_CONFIG` → 常见默认位置。
+fn resolve_config_path(explicit: Option<&Path>) -> PathBuf {
+    if let Some(path) = explicit {
+        return expand_tilde(path);
+    }
+    if let Some(path) = std::env::var_os("TELESH_SERVER_CONFIG") {
+        return expand_tilde(Path::new(&path));
+    }
+    let mut candidates = vec![PathBuf::from("server.toml")];
+    candidates.push(PathBuf::from("/etc/telesh/server.toml"));
+    if let Some(home) = home_dir() {
+        candidates.push(home.join(".telesh/server.toml"));
+    }
+    for path in &candidates {
+        if path.is_file() {
+            return path.clone();
+        }
+    }
+    candidates.remove(0)
 }
 
 /// TCP 隧道可用的端口范围,配置文件里写成 `"18000-18100"`。
@@ -73,8 +186,14 @@ impl<'de> Deserialize<'de> for TcpPortRange {
     }
 }
 
+impl Serialize for TcpPortRange {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&format!("{}-{}", self.start, self.end))
+    }
+}
+
 /// 服务端配置。字段省略时用 [`Default`] 里的值。
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     /// 数据根目录:数据库、证书缓存等都放这里。默认 `~/.telesh`。

@@ -25,30 +25,38 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RelayConfig {
     /// 内嵌中继的 HTTP 监听地址;`None` 表示不运行内嵌中继。
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub serve: Option<SocketAddr>,
     /// 这个中继对外可达的公网 URL,登录后通告给 agent。
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     /// PEM 证书链;和 `tls_key` 一起启用 HTTPS + QUIC。
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tls_cert: Option<PathBuf>,
     /// `tls_cert` 对应的 PEM 私钥。
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tls_key: Option<PathBuf>,
     /// HTTPS 监听地址(配 TLS/ACME 时必填,通常 443)。
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub https_addr: Option<SocketAddr>,
     /// QUIC 地址发现监听地址(默认 `0.0.0.0:7842`)。
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub quic_addr: Option<SocketAddr>,
     /// ACME 域名;非空即启用 Let's Encrypt,并优先于手动 TLS。
     pub acme: Vec<String>,
     /// ACME 账户联系邮箱。
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub acme_email: Option<String>,
     /// 用 Let's Encrypt 的 staging 环境。
     pub acme_staging: bool,
     /// ACME 证书缓存目录;默认 `<dataroot>/acme`。
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub acme_cache: Option<PathBuf>,
 }
 

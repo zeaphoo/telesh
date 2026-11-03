@@ -2,6 +2,8 @@
 #
 # 用法:
 #     telesh-server server.toml
+#     telesh-server config set public_host example.com
+#     telesh-server status
 #
 # 字段都可以省略;省略即用注释里的默认值。路径支持 `~`。
 

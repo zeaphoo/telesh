@@ -6,6 +6,7 @@
 //! bypass the server entirely: peers dial the agent over iroh with a token the
 //! server issued.
 
+pub mod admin;
 pub mod config;
 pub mod control;
 pub mod dashboard;
@@ -19,4 +20,4 @@ pub mod relay_config;
 pub mod state;
 pub mod tcp;
 
-pub use config::{Cli, Config};
+pub use config::{Cli, Command, Config};

@@ -16,6 +16,8 @@ telesh-protocol = { path = "../telesh-protocol" }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
 sha2 = { workspace = true }
 toml = "0.8"
+# 配置子命令用 toml_edit 保留用户注释。
+toml_edit = "0.22"
 # 数据面:agent 主动连入,yamux over TCP + 带长度前缀的 CBOR 信令。
 yamux = { workspace = true }
 tokio-util = { workspace = true }

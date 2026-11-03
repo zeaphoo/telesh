@@ -5,13 +5,13 @@
 
 use std::sync::{Mutex, OnceLock};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 const STATE_CONNECTING: &str = "connecting";
 const STATE_ONLINE: &str = "online";
 const STATE_OFFLINE: &str = "offline";
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AccountInfo {
     /// control server 地址(`host:port`)。
     pub control_server: String,

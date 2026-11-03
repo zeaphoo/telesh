@@ -76,8 +76,12 @@ desired state,不自己起进程:
 | `telesh p2p <PORT>... / --all / --none` | 设置 P2P 入站规则(覆盖式) |
 | `telesh connect ACCOUNT/NAME -l PORT` | 把远端服务镜像到本地端口 |
 | `telesh publish ls / rm <KIND> <PORT>` | 查看 / 删除发布条目 |
+| `telesh status` | 版本 / 账户 / 隧道状态 |
+| `telesh ports` | 本机监听端口,标出已发布方式 |
+| `telesh logs [-f] [--id ID]` | 最近请求 / 跟随 / 单条报文 |
+| `telesh account` | 登录状态与会话信息 |
 
-`--json` 用于脚本;观测与复杂配置继续走 Web UI。
+`--json` 用于脚本;常用观测也可以走 CLI,复杂配置继续走 Web UI。
 
 ## 3. 本机端口发现
 

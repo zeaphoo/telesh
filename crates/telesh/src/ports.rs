@@ -10,13 +10,13 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use futures::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 /// 一个正在监听的本地端口。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortInfo {
     pub port: u16,
     /// 监听地址(`0.0.0.0` 表示所有网卡)。

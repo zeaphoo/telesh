@@ -132,6 +132,8 @@ Tauri 的 `APPLE_*` 变量，由 Tauri 完成临时钥匙串导入、hardened ru
 - `README.txt`
 
 前端已经在编译期嵌入二进制，解压即可运行，不需要 Node 或单独的 `dist/` 目录。
+`telesh-server` 还提供 `status` / `clients` / `tunnels` / `metrics` 以及
+`config set|show|unset` 等运维子命令，详见 `docs/cli.md`。
 
 ```bash
 tar -xzf telesh_0.1.0_linux_amd64.tar.gz
@@ -141,6 +143,11 @@ cd telesh_0.1.0_linux_amd64
 tar -xzf telesh-server_0.1.0_macos_arm64.tar.gz
 cd telesh-server_0.1.0_macos_arm64
 ./telesh-server server.toml
+# 或者不手工改配置:
+./telesh-server config set public_host tunnel.example.com
+./telesh-server status
+./telesh-server clients
+./telesh-server tunnels
 ```
 
 Windows 解压 zip 后直接运行 `telesh.exe` / `telesh-server.exe`。

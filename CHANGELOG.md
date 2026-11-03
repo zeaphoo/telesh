@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Agent CLI: `status`, `ports`, `logs` (with `--follow` / `--id`) and `account`
+  for observing a running agent without opening the web dashboard; all support
+  `--json`.
+- Server CLI: `status`, `clients`, `tunnels`, `metrics` (including Prometheus
+  output), `open`, and `config path|show|get|set|unset|keys|validate`.
+  Configuration edits preserve TOML comments, are validated before writing, and
+  are written atomically; listen/TLS changes still require a restart.
+- Documented the CLI surface in `docs/cli.md`.
+
 ## [0.1.0-rc.1] - 2026-11-02
 
 ### Added

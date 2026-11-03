@@ -1,5 +1,9 @@
 # telesh-server 打包默认配置。deb/rpm 首次安装时复制到 /etc/telesh/server.toml，
 # 已存在则不覆盖。完整字段说明见 crates/telesh-server/server.toml.example。
+#
+# 日常修改推荐用 CLI(写前校验、保留注释):
+#   telesh-server config set public_host tunnel.example.com
+#   telesh-server status
 
 dataroot = "/var/lib/telesh-server"
 control_addr = "0.0.0.0:9009"

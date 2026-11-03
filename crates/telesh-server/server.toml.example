@@ -2,7 +2,12 @@
 #
 #     telesh-server /etc/telesh/server.toml
 #
-# 命令行只有这一个参数。下面每个字段都可以省略,省略即用注释里写的默认值。
+# 下面每个字段都可以省略,省略即用注释里写的默认值。
+# 也可以不手工改文件,用 CLI 查看 / 修改:
+#
+#     telesh-server config show
+#     telesh-server config set public_host tunnel.example.com
+#     telesh-server status
 
 # 数据根目录:数据库、ACME 证书缓存等都放这里。默认 ~/.telesh。
 dataroot = "/var/lib/telesh"

@@ -127,9 +127,13 @@ package_one \
     server.toml.example \
     "telesh-server" \
     "  telesh-server --help
-  telesh-server server.toml         # run the control server + edge ingress" \
-    "Edit server.toml first (control_addr / ingress_addr / data_addr / dataroot).
-  先按需修改 server.toml（控制面、入口、数据面地址与数据目录）。"
+  telesh-server server.toml         # run the control server + edge ingress
+  telesh-server config set public_host example.com
+  telesh-server status              # config + running status + traffic
+  telesh-server clients             # connected agents
+  telesh-server tunnels             # live HTTP/TCP tunnels" \
+    "Configure without editing TOML by hand: `telesh-server config set ...`.
+  用 `telesh-server config set ...` 改配置，写前会自动校验;改完重启生效。"
 
 rm -rf "$DIST_DIR/.stage"
 

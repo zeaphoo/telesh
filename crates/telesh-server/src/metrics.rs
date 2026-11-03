@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 use dashmap::DashMap;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Per-tunnel byte counters (key e.g. `http:<sub>` or `tcp:<port>`).
 #[derive(Default)]
@@ -63,7 +63,7 @@ pub fn add_traffic(key: &str, in_bytes: u64, out_bytes: u64) {
 }
 
 /// Snapshot shape for the dashboard JSON API.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricsSnapshot {
     pub agents_online: u64,
     pub active_connections: u64,
