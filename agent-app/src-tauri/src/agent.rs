@@ -5,6 +5,8 @@
 //! 1. **已经在跑** —— 装成了服务(systemd / launchd / Windows Service),或者
 //!    用户自己起了一个。这时我们只连,不碰它的生命周期;
 //! 2. **没在跑** —— 拉起随包分发的 `telesh`,**退出时由我们负责关掉**(见 [`shutdown`])。
+//!    拉起时显式传 `--dataroot <app_data_dir>`,让进程的数据目录和 app 的
+//!    (托盘设置等)统一在同一个目录下,而不是默认的 `~/.telesh`。
 //!
 //! 已知缺口:app 被强杀(`kill -9` / 任务管理器)时这里不会执行。实测在
 //! Linux/macOS 上子进程通常也会跟着走 —— 它的 stdout 管道断开,而下一次写日志
@@ -14,10 +16,12 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+use tauri::AppHandle;
 
 /// 面板地址,必须和 `crates/telesh/src/main.rs` 里的 `DEFAULT_UI_PORT` 一致。
 pub const UI_ADDR: &str = "127.0.0.1:16345";
@@ -52,7 +56,7 @@ enum Probe {
 }
 
 /// 确保后端可用:已经在跑就直接用,没跑就拉起 sidecar 并等它就绪。
-pub fn ensure_running() -> Outcome {
+pub fn ensure_running(app: &AppHandle) -> Outcome {
     match probe_dashboard() {
         // 服务模式,或者用户自己起了一个:只连,不碰它的生命周期。
         Probe::Telesh => Outcome::Ready,
@@ -60,7 +64,7 @@ pub fn ensure_running() -> Outcome {
             "{UI_ADDR} 上的不是 telesh{}(可能有别的服务占了这个端口)",
             server.map(|s| format!("({s})")).unwrap_or_default()
         )),
-        Probe::Nothing => start_sidecar(),
+        Probe::Nothing => start_sidecar(&crate::data_dir(app)),
     }
 }
 
@@ -105,8 +109,8 @@ fn classify(data: &[u8]) -> Probe {
     }
 }
 
-/// 拉起随包的 `telesh` 并等它就绪。
-fn start_sidecar() -> Outcome {
+/// 拉起随包的 `telesh` 并等它就绪。`dataroot` 由 app 指定,和 app 的数据同目录。
+fn start_sidecar(dataroot: &Path) -> Outcome {
     let Some(bin) = find_binary() else {
         return Outcome::NotReady(
             "找不到 telesh 可执行文件;用 TELESH_BIN=/path/to/telesh 指定,或先跑 scripts/prepare-sidecar.sh"
@@ -115,7 +119,9 @@ fn start_sidecar() -> Outcome {
     };
 
     let mut cmd = Command::new(&bin);
-    cmd.stdin(Stdio::null())
+    cmd.arg("--dataroot")
+        .arg(dataroot)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = match cmd.spawn() {

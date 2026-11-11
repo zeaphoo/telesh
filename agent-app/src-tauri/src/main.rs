@@ -16,6 +16,8 @@ mod agent;
 mod prefs;
 mod tray;
 
+use std::path::PathBuf;
+
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 /// 面板地址:必须和 `crates/telesh/src/main.rs` 的 `UI_ADDR` 一致。
@@ -34,7 +36,7 @@ fn main() {
             // connection refused,而外部 http 页面不会自己重试。
             let worker = handle.clone();
             std::thread::spawn(move || {
-                let outcome = agent::ensure_running();
+                let outcome = agent::ensure_running(&worker);
                 match &outcome {
                     agent::Outcome::Ready => {}
                     agent::Outcome::NotReady(e) => {
@@ -80,6 +82,15 @@ fn main() {
                 agent::shutdown();
             }
         });
+}
+
+/// app 的数据根目录(由 `tauri.conf.json` 的 identifier 决定)。
+///
+/// 托盘设置和 telesh 进程的 dataroot 都放在这里,统一一份数据目录。
+pub fn data_dir(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_data_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 /// 打开(或唤回)主窗口。系统边框保留。

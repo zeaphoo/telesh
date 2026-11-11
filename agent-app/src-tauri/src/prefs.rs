@@ -1,13 +1,13 @@
 //! 托盘里那点"设置"的持久化。目前只有一项:关窗口是收进托盘还是直接退出。
 //!
-//! 存 `<app_config_dir>/prefs.json`(由 `tauri.conf.json` 的 identifier 决定),
-//! 和 telesh 自己的 `<dataroot>` 无关,互不干扰。
+//! 存 `<app_data_dir>/prefs.json`(由 `tauri.conf.json` 的 identifier 决定)。
+//! 这也是 telesh 进程的 `<dataroot>`,app 和进程的数据统一在这一个目录下。
 
 use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Prefs {
@@ -62,10 +62,7 @@ fn current<T>(f: impl FnOnce(&Prefs) -> T) -> T {
 }
 
 fn path(app: &AppHandle) -> PathBuf {
-    app.path()
-        .app_config_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("prefs.json")
+    crate::data_dir(app).join("prefs.json")
 }
 
 fn save(app: &AppHandle, prefs: &Prefs) {

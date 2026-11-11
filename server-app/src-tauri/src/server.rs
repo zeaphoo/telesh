@@ -8,8 +8,9 @@
 //! 2. **没在跑** —— 拉起随包分发的 `telesh-server`,**退出时由我们负责关掉**
 //!    (见 [`shutdown`])。
 //!
-//! 配置文件由 `TELESH_SERVER_CONFIG` 指定;没设时用 app 配置目录里的
-//! `server.toml`,不存在就写一份默认的。dashboard 地址从配置的 `control_addr`
+//! 配置文件由 `TELESH_SERVER_CONFIG` 指定;没设时用 app 数据目录里的
+//! `server.toml`,不存在就写一份默认的。默认配置里的 `dataroot` 也指向同一个
+//! app 数据目录,app 和进程的数据不分开。dashboard 地址从配置的 `control_addr`
 //! 推导(通配地址换成回环地址),这样用户改了端口 app 也能找对地方。
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -20,7 +21,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 /// telesh-server 的默认控制面端口;dashboard 和控制在同一个监听上。
 pub const DEFAULT_CONTROL_ADDR: &str = "0.0.0.0:9009";
@@ -65,15 +66,12 @@ pub struct Dashboard {
     pub url: String,
 }
 
-/// 配置文件路径:环境变量优先,否则 `<app_config_dir>/server.toml`。
+/// 配置文件路径:环境变量优先,否则 `<app_data_dir>/server.toml`。
 pub fn config_path(app: &AppHandle) -> PathBuf {
     if let Some(path) = std::env::var_os("TELESH_SERVER_CONFIG") {
         return PathBuf::from(path);
     }
-    app.path()
-        .app_config_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("server.toml")
+    crate::data_dir(app).join("server.toml")
 }
 
 /// 确保配置文件存在。环境变量显式指定时**不自动创建**(那是用户给的文件);
@@ -262,11 +260,8 @@ fn loopback(addr: SocketAddr) -> SocketAddr {
 
 /// 给 app 自己管的配置文件写一份默认内容。
 fn default_config(app: &AppHandle, path: &Path) -> String {
-    let dataroot = app
-        .path()
-        .app_data_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("data");
+    // 数据目录就是 app 数据目录本身:配置、prefs、数据库、证书缓存都在一起。
+    let dataroot = crate::data_dir(app);
     let dataroot = dataroot.to_string_lossy();
 
     format!(
@@ -275,7 +270,7 @@ fn default_config(app: &AppHandle, path: &Path) -> String {
 # 文件位置:{path}
 # 改完后退出并重新打开 app 生效。
 #
-# 数据目录:数据库、ACME 证书缓存等都放这里。
+# 数据目录:数据库、ACME 证书缓存等都放这里(和 app 的设置同一个目录)。
 dataroot = {dataroot:?}
 
 # 控制面 + dashboard 共用的监听地址。app 的窗口连 127.0.0.1:<端口>。

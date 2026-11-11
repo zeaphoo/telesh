@@ -3,7 +3,7 @@
   "productName": "telesh agent",
   "mainBinaryName": "telesh-app",
   "version": "0.1.0-rc.1",
-  "identifier": "com.telesh.agent",
+  "identifier": "net.quadhub.telesh",
   "build": {
     "frontendDist": "../ui"
   },

@@ -3,7 +3,7 @@
   "productName": "telesh server",
   "mainBinaryName": "telesh-server-app",
   "version": "0.1.0-rc.1",
-  "identifier": "com.telesh.server",
+  "identifier": "net.quadhub.telesh-server",
   "build": {
     "frontendDist": "../ui"
   },
