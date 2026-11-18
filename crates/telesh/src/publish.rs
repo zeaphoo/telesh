@@ -213,31 +213,36 @@ impl Shared {
 
     /// 覆盖式写入设置并落盘(UI 提交)。
     pub fn apply_settings(&self, settings: Settings) {
-        let mut guard = self.settings.lock().unwrap();
-        *guard = settings;
-        self.persist(&guard);
+        let snapshot = settings.clone();
+        *self.settings.lock().unwrap() = settings;
+        // 锁外落盘:磁盘慢时不拖住热路径上读 settings 的调用方。
+        self.persist(&snapshot);
     }
 
     /// 把某个 section 的端口集合同步成 `ports`:新端口补默认值,消失的删掉,
     /// 已有端口保留用户的选择。集合变了才落盘。daemon 每次 reconcile 调用。
     pub fn sync_settings(&self, section: Section, ports: &[u16]) {
-        let mut guard = self.settings.lock().unwrap();
-        let desired: BTreeSet<u16> = ports.iter().copied().collect();
-        let map = match section {
-            Section::Publish => &mut guard.publish,
-            Section::P2p => &mut guard.p2p,
+        let snapshot = {
+            let mut guard = self.settings.lock().unwrap();
+            let desired: BTreeSet<u16> = ports.iter().copied().collect();
+            let map = match section {
+                Section::Publish => &mut guard.publish,
+                Section::P2p => &mut guard.p2p,
+            };
+            if map.keys().copied().collect::<BTreeSet<_>>() == desired {
+                return;
+            }
+            map.retain(|p, _| desired.contains(p));
+            for &p in &desired {
+                map.entry(p).or_default();
+            }
+            (*guard).clone()
         };
-        if map.keys().copied().collect::<BTreeSet<_>>() == desired {
-            return;
-        }
-        map.retain(|p, _| desired.contains(p));
-        for &p in &desired {
-            map.entry(p).or_default();
-        }
-        self.persist(&guard);
+        // 锁外落盘:见 apply_settings。
+        self.persist(&snapshot);
     }
 
-    /// 把当前设置写回 `settings.json`(调用时已持有锁)。
+    /// 把当前设置写回 `settings.json`。
     fn persist(&self, settings: &Settings) {
         if let Some(path) = state_path() {
             if let Err(e) = save_settings(path, settings) {

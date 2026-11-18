@@ -99,7 +99,11 @@ pub fn scan() -> Vec<PortInfo> {
 /// 探测会真的向本地服务发一个 `HEAD /`(有副作用),所以:
 /// 每个端口在一个进程生命周期内只探一次;端口消失后缓存清除,重新出现会再探一次。
 pub async fn scan_and_probe() -> Vec<PortInfo> {
-    let mut list = scan();
+    // `/proc` 遍历是同步阻塞的(逐 pid 读 fd),放到 blocking 线程池,
+    // 别占着 tokio worker 让面板/控制连接卡住。
+    let Ok(mut list) = tokio::task::spawn_blocking(scan).await else {
+        return Vec::new();
+    };
 
     // 端口消失 → 清掉缓存,服务重启后会重新探测。
     let live: std::collections::HashSet<u16> = list.iter().map(|p| p.port).collect();

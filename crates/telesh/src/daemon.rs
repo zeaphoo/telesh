@@ -202,12 +202,23 @@ async fn session(creds: &Credentials, shared: &Arc<Shared>) -> Result<()> {
     let mut next_id: u64 = 1;
     let mut tick = tokio::time::interval(Duration::from_secs(3));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // 后台端口刷新任务:同一时刻只跑一个,避免 tick 叠加扫描。
+    let mut port_refresh: Option<tokio::task::JoinHandle<()>> = None;
 
     let result = loop {
         tokio::select! {
             _ = shared.notify.notified() => {}
             _ = tick.tick() => {
-                shared.set_ports(crate::ports::scan_and_probe().await);
+                // 端口扫描/探测放到后台任务:遍历 /proc 是阻塞调用,探测每个端口
+                // 最多 700ms。若在这里 await,这段时间读不到 WS 控制帧(包括 Ping),
+                // 慢机器上就会表现为「没响应」。刷新完再唤醒 daemon 重新 reconcile。
+                if port_refresh.as_ref().is_none_or(|h| h.is_finished()) {
+                    let shared = shared.clone();
+                    port_refresh = Some(tokio::spawn(async move {
+                        shared.set_ports(crate::ports::scan_and_probe().await);
+                        shared.notify.notify_one();
+                    }));
+                }
                 // P2P 流量服务端看不到,agent 定期上报。
                 for t in crate::p2p::drain_traffic() {
                     let _ = tx.send(Frame::Traffic(t));
